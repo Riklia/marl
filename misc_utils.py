@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import entropy
 from matplotlib.animation import FuncAnimation, PillowWriter
 
+
 def greedy_distance(list1, list2, squared_distances: bool = False):
     total_distance = 0.0
     used1, used2 = set(), set()

@@ -120,6 +120,9 @@ class BoardsWrapper:
         self.animation_frames.append(self.env.draw_boards())
         return instant_reward, self.done
     
+    def get_useless_action_val(self):
+        return int(self.env.useless_action_flag)
+    
     def get_final_reward(self):
         if not self.done:
             raise RuntimeError("The episode is not over yet.")

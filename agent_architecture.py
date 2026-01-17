@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
 
+
 class PPOMemory:
     def __init__(self, batch_size: int, seed: int | None = None):
         if seed is None:
@@ -167,6 +168,13 @@ class PPOAgent:
     def learn(self):
         if self.frozen:
             return
+        
+        # Additional stats
+        entropy_dist = []
+        actor_loss_dist = []
+        critic_loss_dist = []
+        total_loss_dist = []
+
         for _ in range(self.params.n_epochs):
             state_list, action_arr, old_prob_arr, vals_arr, reward_arr, dones_arr, batches = self.memory.generate_batches()
 
@@ -214,7 +222,15 @@ class PPOAgent:
                 self.actor.optimizer.step()
                 self.critic.optimizer.step()
 
+                # Additional stats
+                entropy_dist.append(entropy.item())
+                actor_loss_dist.append(actor_loss.item())
+                critic_loss_dist.append(critic_loss.item())
+                total_loss_dist.append(total_loss.item())
         self.memory.clear_memory()
+
+        # Additional stats
+        return entropy_dist, actor_loss_dist, critic_loss_dist, total_loss_dist
         
 class RandomAgent:
     def __init__(self, permitted_actions: list[int], seed: int | None = None):
