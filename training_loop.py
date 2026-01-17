@@ -128,7 +128,7 @@ def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, recei
              'sender_total_loss_dist': sender_total_loss_dist}
     return stats
 
-def save_stats(stats: dict(), file_path: str):
+def save_stats(stats, file_path: str):
     with open(file_path, 'wb') as file:
         pickle.dump(stats, file)
 
