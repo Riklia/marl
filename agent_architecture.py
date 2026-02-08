@@ -72,15 +72,17 @@ class ActorNetwork(nn.Module):
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, n_actions),
-            nn.Softmax(dim = -1)
         )
 
         self.optimizer = optim.SGD(self.parameters(), lr = alpha) # type: ignore
 
     def forward(self, observation):
         current_board, previous_boards, progress = observation
-        combined = torch.cat([previous_boards.flatten(1), current_board.flatten(1), progress], dim = 1)
-        return Categorical(self.fc(combined))
+        x = torch.cat([previous_boards, current_board], dim=1)  # shape: [B, C, H, W]
+        x = self.conv(x)
+        combined = torch.cat([x, progress], dim=1)
+        logits = self.fc(combined)
+        return Categorical(logits=logits)
 
 class CriticNetwork(nn.Module):
     def __init__(self, board_size, history_len, hidden_size, alpha):
@@ -112,7 +114,9 @@ class CriticNetwork(nn.Module):
 
     def forward(self, observation):
         current_board, previous_boards, progress = observation
-        combined = torch.cat([previous_boards.flatten(1), current_board.flatten(1), progress], dim = 1)
+        x = torch.cat([previous_boards, current_board], dim=1)  # shape: [B, C, H, W]
+        x = self.conv(x)
+        combined = torch.cat([x, progress], dim=1)
         return self.fc(combined)
     
 class AgentParams:
