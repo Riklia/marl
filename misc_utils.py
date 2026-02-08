@@ -96,3 +96,15 @@ def smooth_list(values, n):
         smoothed_values.append(sum(window) / len(window))
         
     return smoothed_values
+
+def compute_gae(rewards: np.ndarray, values: np.ndarray, dones: np.ndarray,
+                gamma: float, gae_lambda: float) -> np.ndarray:
+    # https://huggingface.co/blog/NormalUhr/rlhf-pipeline#29-estimating-the-advantage-term--using-the-iterative-gae-strategy
+    advantage = np.zeros(len(rewards), dtype=np.float32)
+    gae = 0
+    for t in reversed(range(len(rewards) - 1)):
+        nonterminal = 1.0 - float(dones[t])
+        delta = rewards[t] + gamma * values[t + 1] * nonterminal - values[t]
+        gae = delta + gamma * gae_lambda * nonterminal * gae
+        advantage[t] = gae
+    return advantage

@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
 
+import misc_utils
+
 
 class PPOMemory:
     def __init__(self, batch_size: int, seed: int | None = None):
@@ -183,16 +185,9 @@ class PPOAgent:
             state_list, action_arr, old_prob_arr, vals_arr, reward_arr, dones_arr, batches = self.memory.generate_batches()
 
             values = vals_arr
-            advantage = np.zeros(len(reward_arr), dtype = np.float32)
-
-            for t in range(len(reward_arr) - 1):
-                discount = 1
-                a_t = 0
-                for k in range(t, len(reward_arr) - 1):
-                    a_t += discount * (reward_arr[k] + self.params.gamma * values[k + 1] * (1 - int(dones_arr[k])) - values[k])
-                    discount *= self.params.gamma * self.params.gae_lambda
-                advantage[t] = a_t
-            advantage = torch.tensor(advantage).to(self.device)
+            advantage = misc_utils.compute_gae(reward_arr, vals_arr, dones_arr,
+                                               gamma=self.params.gamma, gae_lambda=self.params.gae_lambda)
+            advantage = torch.from_numpy(advantage).to(self.device)
 
             values = torch.tensor(values).to(self.device)
             for batch in batches:
@@ -209,7 +204,7 @@ class PPOAgent:
                 critic_value = torch.squeeze(critic_value)
 
                 new_probs = dist.log_prob(actions)
-                prob_ratio = new_probs.exp() / old_probs.exp()
+                prob_ratio = (new_probs - old_probs).exp()
                 weighted_probs = advantage[batch] * prob_ratio
                 weighted_clipped_probs = torch.clamp(prob_ratio, 1 - self.params.policy_clip, 1 + self.params.policy_clip) * advantage[batch]
                 actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
