@@ -51,11 +51,6 @@ class PPOMemory:
             reward: float,
             done: bool
     ):
-        # Allow legacy tuple states
-        if not isinstance(state, Observation):
-            # Expects (current_board, previous_boards, progress)
-            state = Observation(*state)
-
         self.states.append(state)
         self.actions.append(action)
         self.probs.append(probs)
@@ -188,11 +183,8 @@ class PPOAgent:
 
     def choose_action(
             self,
-            observation: Observation | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+            observation: Observation
     ) -> tuple[int, float, float]:
-        if not isinstance(observation, Observation):
-            observation = Observation(*observation)
-
         with torch.no_grad():
             dist = self.actor(observation)
             value = self.critic(observation)
