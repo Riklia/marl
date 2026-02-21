@@ -193,7 +193,8 @@ class BoardsImplementation:
             self.board2_guesses.sort() # Unsure about that.
             # It makes the control scheme not dependant on previous actions, but changes which actions correspond to which objects.
 
-    def draw_boards(self): # Show the current state of the boards as a nice, low-quality image with a boring, gray frame.
+    def draw_boards(self):
+        """Returns the current state of the boards as a nice, low-quality image with a boring, gray frame."""
         image = np.concatenate((
             np.zeros((1, self.size * 2 + 3, 3), dtype = np.uint8) + 100,
             np.concatenate((
@@ -212,12 +213,16 @@ class BoardsImplementation:
         plt.imshow(image)
         plt.axis('off')
         plt.show()
-    
-    def reward_function(self): # The reward function is the same for both agents and should only be calculated and applied at the end of an episode.
-        current_distance = self.distance_func(self.board1_landmarks, self.board2_guesses) # The greedy_distance function is expensive to calculate.
-        # More stable and suitable as a reward since neutral distance is the same between episodes. Meant for the agents.
+
+    def reward_function(self):
+        """
+        Computes the final episode reward and diagnostic performance metric.
+
+        Reward is normalized using the precomputed neutral distance to ensure stability across episodes, which
+        is preferred for agents. Performance is normalized by the initial distance and is intended for
+        evaluation/analysis only.
+        """
+        current_distance = self.distance_func(self.board1_landmarks, self.board2_guesses)
         reward = 1.0 - current_distance / self.neutral_distance
-        # Allows for easily telling if agents improved or worsened the alignment of landmarks and guesses in current episode. Meant for humans.
         performance = 1.0 - current_distance / self.start_distance
         return reward, performance
-        
