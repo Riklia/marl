@@ -58,7 +58,7 @@ def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, recei
 
             sender_instant += sender_reward
             useless_action_sender += env.get_useless_action_val()
-            if (sender_action == 0):
+            if sender_action == 0:
                 empty_action_sender += 1
             
             receiver_state = env.receiver_observe()
@@ -67,7 +67,7 @@ def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, recei
 
             receiver_instant += receiver_reward
             useless_action_receiver += env.get_useless_action_val()
-            if (receiver_action == 0):
+            if receiver_action == 0:
                 empty_action_receiver += 1
             
             if done:

@@ -27,7 +27,7 @@ class PPOMemory:
         self.clear_memory()
 
     def generate_batches(self):
-        n_states = len(self.states) - 1 # Not using the dummy memory for training.
+        n_states = len(self.states)
         batch_start = np.arange(0, n_states, self.batch_size)
         indices = np.arange(n_states, dtype = np.int64)
         self.rng.shuffle(indices)
@@ -157,8 +157,6 @@ class PPOAgent:
         if self.frozen:
             return
         self.memory.store_memory(state, action, probs, vals, reward, done)
-        if done: # Dummy memory at the end because otherwise the end reward is ignored.
-            self.memory.store_memory(state, action, probs, vals, reward, done)
 
     def policy(self, observation: Observation) -> Categorical:
         dist, _ = self.ac.dist_and_value(observation)
@@ -178,46 +176,55 @@ class PPOAgent:
     def learn(self):
         if self.frozen:
             return
-        
-        # Additional stats
-        entropy_dist = []
-        actor_loss_dist = []
-        critic_loss_dist = []
-        total_loss_dist = []
+
+        entropy_dist, actor_loss_dist, critic_loss_dist, total_loss_dist = [], [], [], []
 
         for _ in range(self.params.n_epochs):
             state_list, action_arr, old_prob_arr, vals_arr, reward_arr, dones_arr, batches = self.memory.generate_batches()
+            t_steps = len(action_arr)
+            if t_steps == 0:
+                self.memory.clear_memory()
+                return entropy_dist, actor_loss_dist, critic_loss_dist, total_loss_dist
 
-            values = vals_arr
-            advantage = misc_utils.compute_gae(reward_arr, vals_arr, dones_arr,
-                                               gamma=self.params.gamma, gae_lambda=self.params.gae_lambda)
-            advantage = torch.from_numpy(advantage).to(self.device)
+            last_value = 0.0 if bool(dones_arr[-1]) else float(vals_arr[-1])
 
-            values = torch.tensor(values).to(self.device)
+            advantage_np = misc_utils.compute_gae(
+                reward_arr,
+                vals_arr,
+                dones_arr,
+                gamma=self.params.gamma,
+                gae_lambda=self.params.gae_lambda,
+                last_value=last_value,
+            )
+            advantage = torch.from_numpy(advantage_np).to(self.device)
+            values = torch.tensor(vals_arr, dtype=torch.float32, device=self.device)
+
             for batch in batches:
                 current_boards = torch.cat([state_list[i].current_board for i in batch], dim=0).to(self.device)
                 previous_boards = torch.cat([state_list[i].previous_boards for i in batch], dim=0).to(self.device)
                 progresses = torch.cat([state_list[i].progress for i in batch], dim=0).to(self.device)
-
                 states = Observation(current_boards, previous_boards, progresses)
-                old_probs = torch.tensor(old_prob_arr[batch]).to(self.device)
-                actions = torch.tensor(action_arr[batch]).to(self.device)
+
+                old_log_probs = torch.tensor(old_prob_arr[batch], dtype=torch.float32, device=self.device)
+                actions = torch.tensor(action_arr[batch], dtype=torch.long, device=self.device)
 
                 dist, critic_value = self.ac.dist_and_value(states)
-
                 critic_value = torch.squeeze(critic_value)
 
-                new_probs = dist.log_prob(actions)
-                prob_ratio = (new_probs - old_probs).exp()
+                new_log_probs = dist.log_prob(actions)
+                prob_ratio = (new_log_probs - old_log_probs).exp()
+
                 weighted_probs = advantage[batch] * prob_ratio
-                weighted_clipped_probs = torch.clamp(prob_ratio, 1 - self.params.policy_clip, 1 + self.params.policy_clip) * advantage[batch]
+                weighted_clipped_probs = torch.clamp(
+                    prob_ratio, 1 - self.params.policy_clip, 1 + self.params.policy_clip
+                ) * advantage[batch]
+
                 actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
 
                 returns = advantage[batch] + values[batch]
-                critic_loss = (returns - critic_value) ** 2
-                critic_loss = critic_loss.mean()
-                entropy = dist.entropy().mean()
+                critic_loss = (returns - critic_value).pow(2).mean()
 
+                entropy = dist.entropy().mean()
                 total_loss = actor_loss + 0.5 * critic_loss - 0.005 * entropy
 
                 self.optimizer.zero_grad(set_to_none=True)
@@ -225,13 +232,12 @@ class PPOAgent:
                 torch.nn.utils.clip_grad_norm_(self.ac.parameters(), 0.5)
                 self.optimizer.step()
 
-                entropy_dist.append(entropy.item())
-                actor_loss_dist.append(actor_loss.item())
-                critic_loss_dist.append(critic_loss.item())
-                total_loss_dist.append(total_loss.item())
-        self.memory.clear_memory()
+                entropy_dist.append(float(entropy.item()))
+                actor_loss_dist.append(float(actor_loss.item()))
+                critic_loss_dist.append(float(critic_loss.item()))
+                total_loss_dist.append(float(total_loss.item()))
 
-        # Additional stats
+        self.memory.clear_memory()
         return entropy_dist, actor_loss_dist, critic_loss_dist, total_loss_dist
         
 class RandomAgent:
