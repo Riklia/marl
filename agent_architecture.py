@@ -6,7 +6,7 @@ import torch.optim as optim
 from torch.distributions import Categorical
 
 import misc_utils
-
+from custom_types import Observation
 
 class PPOMemory:
     def __init__(self, batch_size: int, seed: int | None = None):
@@ -15,7 +15,15 @@ class PPOMemory:
         elif seed < 0:
             raise ValueError("The seed should be non negative.")
         self.rng = np.random.default_rng(seed)
-        self.batch_size = batch_size
+        self.batch_size: int = batch_size
+
+        self.states: list[Observation] = []
+        self.probs: list[float] = []
+        self.actions: list[int] = []
+        self.rewards: list[float] = []
+        self.dones: list[bool] = []
+        self.vals: list[float] = []
+
         self.clear_memory()
 
     def generate_batches(self):
@@ -34,7 +42,20 @@ class PPOMemory:
 
         return states, actions, probs, vals, rewards, dones, batches
 
-    def store_memory(self, state, action, probs, vals, reward, done):
+    def store_memory(
+            self,
+            state: Observation | tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+            action: int,
+            probs: float,
+            vals: float,
+            reward: float,
+            done: bool
+    ):
+        # Allow legacy tuple states
+        if not isinstance(state, Observation):
+            # Expects (current_board, previous_boards, progress)
+            state = Observation(*state)
+
         self.states.append(state)
         self.actions.append(action)
         self.probs.append(probs)
@@ -43,12 +64,12 @@ class PPOMemory:
         self.dones.append(done)
 
     def clear_memory(self):
-        self.states = list()
-        self.probs = list()
-        self.actions = list()
-        self.rewards = list()
-        self.dones = list()
-        self.vals = list()
+        self.states = []
+        self.probs = []
+        self.actions = []
+        self.rewards = []
+        self.dones = []
+        self.vals = []
 
 class ActorNetwork(nn.Module):
     def __init__(self, board_size, history_len, n_actions, hidden_size, alpha):
@@ -78,8 +99,11 @@ class ActorNetwork(nn.Module):
 
         self.optimizer = optim.SGD(self.parameters(), lr = alpha) # type: ignore
 
-    def forward(self, observation):
-        current_board, previous_boards, progress = observation
+    def forward(self, observation: Observation):
+        current_board = observation.current_board
+        previous_boards = observation.previous_boards
+        progress = observation.progress
+
         x = torch.cat([previous_boards, current_board], dim=1)  # shape: [B, C, H, W]
         x = self.conv(x)
         combined = torch.cat([x, progress], dim=1)
@@ -114,9 +138,12 @@ class CriticNetwork(nn.Module):
 
         self.optimizer = optim.SGD(self.parameters(), lr = alpha) # type: ignore
 
-    def forward(self, observation):
-        current_board, previous_boards, progress = observation
-        x = torch.cat([previous_boards, current_board], dim=1)  # shape: [B, C, H, W]
+    def forward(self, observation: Observation):
+        current_board = observation.current_board
+        previous_boards = observation.previous_boards
+        progress = observation.progress
+
+        x = torch.cat([previous_boards, current_board], dim=1)
         x = self.conv(x)
         combined = torch.cat([x, progress], dim=1)
         return self.fc(combined)
@@ -159,7 +186,13 @@ class PPOAgent:
         if done: # Dummy memory at the end because otherwise the end reward is ignored.
             self.memory.store_memory(state, action, probs, vals, reward, done)
 
-    def choose_action(self, observation):
+    def choose_action(
+            self,
+            observation: Observation | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+    ) -> tuple[int, float, float]:
+        if not isinstance(observation, Observation):
+            observation = Observation(*observation)
+
         with torch.no_grad():
             dist = self.actor(observation)
             value = self.critic(observation)
@@ -191,10 +224,11 @@ class PPOAgent:
 
             values = torch.tensor(values).to(self.device)
             for batch in batches:
-                current_boards = torch.cat([state_list[i][0] for i in batch], dim = 0).to(self.device)
-                previous_boards = torch.cat([state_list[i][1] for i in batch], dim = 0).to(self.device)
-                progresses = torch.cat([state_list[i][2] for i in batch], dim = 0).to(self.device)
-                states = (current_boards, previous_boards, progresses)
+                current_boards = torch.cat([state_list[i].current_board for i in batch], dim=0).to(self.device)
+                previous_boards = torch.cat([state_list[i].previous_boards for i in batch], dim=0).to(self.device)
+                progresses = torch.cat([state_list[i].progress for i in batch], dim=0).to(self.device)
+
+                states = Observation(current_boards, previous_boards, progresses)
                 old_probs = torch.tensor(old_prob_arr[batch]).to(self.device)
                 actions = torch.tensor(action_arr[batch]).to(self.device)
 
