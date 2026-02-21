@@ -15,20 +15,16 @@ def make_const_obs(board_size: int, history_len: int, device: str = "cpu") -> Ob
     prog = torch.zeros((1, 1), dtype=torch.float32, device=device)
     return Observation(current, prev, prog)
 
-
 def greedy_action(agent: PPOAgent, obs: Observation) -> int:
     with torch.no_grad():
-        dist = agent.actor(obs)
-        # dist.logits shape: [B, n_actions], here B=1
+        dist = agent.policy(obs)
         return int(torch.argmax(dist.logits, dim=-1).item())
-
 
 def prob_of_action(agent: PPOAgent, obs: Observation, a: int) -> float:
     with torch.no_grad():
-        dist = agent.actor(obs)
+        dist = agent.policy(obs)
         p = torch.softmax(dist.logits, dim=-1)[0, a].item()
         return float(p)
-
 
 def test_ppo_learns_trivial_bandit():
     torch.set_num_threads(1)

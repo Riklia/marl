@@ -66,82 +66,61 @@ class PPOMemory:
         self.dones = []
         self.vals = []
 
-class ActorNetwork(nn.Module):
-    def __init__(self, board_size, history_len, n_actions, hidden_size, alpha):
-        super(ActorNetwork, self).__init__()
-        
-        channels = 3 * (history_len + 1)
+class SharedEncoder(nn.Module):
+    def __init__(self, board_size: int, history_len: int):
+        super().__init__()
+        self.channels = 3 * (history_len + 1)
+        channels = self.channels
         self.conv = nn.Sequential(
-            nn.Conv2d(channels, channels * 2, kernel_size = 3, padding = 1),
+            nn.Conv2d(channels, channels * 2, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(channels * 2, channels * 2, kernel_size = 3, padding = 1),
+            nn.Conv2d(channels * 2, channels * 2, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(channels * 2, channels, kernel_size = 3, padding = 1),
+            nn.Conv2d(channels * 2, channels, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Flatten()
+            nn.Flatten(),
         )
-        
-        fc_in_size = channels * board_size * board_size + 1
-        self.fc = nn.Sequential(
-            nn.Linear(fc_in_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, n_actions),
-        )
+        self.out_dim = channels * board_size * board_size  # flattened conv output
 
-        self.optimizer = optim.Adam(self.parameters(), lr = alpha) # type: ignore
+    def forward(self, observation):
+        x = torch.cat([observation.previous_boards, observation.current_board], dim=1)
+        return self.conv(x)
 
-    def forward(self, observation: Observation):
-        current_board = observation.current_board
-        previous_boards = observation.previous_boards
-        progress = observation.progress
+class ActorCritic(nn.Module):
+    def __init__(self, board_size: int, history_len: int, n_actions: int, hidden_size: int):
+        super().__init__()
+        self.encoder = SharedEncoder(board_size, history_len)
 
-        x = torch.cat([previous_boards, current_board], dim=1)  # shape: [B, C, H, W]
-        x = self.conv(x)
-        combined = torch.cat([x, progress], dim=1)
-        logits = self.fc(combined)
-        return Categorical(logits=logits)
+        fc_in = self.encoder.out_dim + 1  # + progress scalar
 
-class CriticNetwork(nn.Module):
-    def __init__(self, board_size, history_len, hidden_size, alpha):
-        super(CriticNetwork, self).__init__()
-        
-        channels = 3 * (history_len + 1)
-        self.conv = nn.Sequential(
-            nn.Conv2d(channels, channels * 2, kernel_size = 3, padding = 1),
-            nn.ReLU(),
-            nn.Conv2d(channels * 2, channels * 2, kernel_size = 3, padding = 1),
-            nn.ReLU(),
-            nn.Conv2d(channels * 2, channels, kernel_size = 3, padding = 1),
-            nn.ReLU(),
-            nn.Flatten()
-        )
-        
-        fc_in_size = channels * board_size * board_size + 1
-        self.fc = nn.Sequential(
-            nn.Linear(fc_in_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, 1)
-        )
+        def mlp(out_dim: int):
+            return nn.Sequential(
+                nn.Linear(fc_in, hidden_size),
+                nn.ReLU(),
+                nn.Linear(hidden_size, hidden_size),
+                nn.ReLU(),
+                nn.Linear(hidden_size, hidden_size),
+                nn.ReLU(),
+                nn.Linear(hidden_size, out_dim),
+            )
 
-        self.optimizer = optim.SGD(self.parameters(), lr = alpha) # type: ignore
+        self.actor_head = mlp(n_actions)
+        self.critic_head = mlp(1)
 
-    def forward(self, observation: Observation):
-        current_board = observation.current_board
-        previous_boards = observation.previous_boards
-        progress = observation.progress
+    def forward(self, observation):
+        z = self.encoder(observation)
+        combined = torch.cat([z, observation.progress], dim=1)
+        logits = self.actor_head(combined)
 
-        x = torch.cat([previous_boards, current_board], dim=1)
-        x = self.conv(x)
-        combined = torch.cat([x, progress], dim=1)
-        return self.fc(combined)
+        # Use detached features for critic
+        value = self.critic_head(torch.cat([z.detach(), observation.progress], dim=1)).squeeze(-1)
+
+        return logits, value
+
+    def dist_and_value(self, observation):
+        logits, value = self.forward(observation)
+        dist = Categorical(logits=logits)
+        return dist, value
     
 class AgentParams:
     def __init__(self, gamma = 0.99, alpha = 1e-4, gae_lambda = 0.95, policy_clip = 0.1, batch_size = 8, n_epochs = 4, seed = None):
@@ -166,9 +145,9 @@ class PPOAgent:
         self.hidden_size = hidden_size
         self.device = device
         self.frozen = frozen
-        
-        self.actor = ActorNetwork(board_size, history_len, n_actions, hidden_size, self.params.alpha).to(device)
-        self.critic = CriticNetwork(board_size, history_len, hidden_size, self.params.alpha).to(device)
+
+        self.ac = ActorCritic(board_size, history_len, n_actions, hidden_size).to(device)
+        self.optimizer = optim.Adam(self.ac.parameters(), lr=self.params.alpha)
         self.memory = PPOMemory(self.params.batch_size, self.params.seed)
         
     def freeze(self, frozen: bool):
@@ -181,20 +160,20 @@ class PPOAgent:
         if done: # Dummy memory at the end because otherwise the end reward is ignored.
             self.memory.store_memory(state, action, probs, vals, reward, done)
 
-    def choose_action(
-            self,
-            observation: Observation
-    ) -> tuple[int, float, float]:
+    def policy(self, observation: Observation) -> Categorical:
+        dist, _ = self.ac.dist_and_value(observation)
+        return dist
+
+    def value(self, observation: Observation) -> torch.Tensor:
+        _, v = self.ac.dist_and_value(observation)
+        return v
+
+    def choose_action(self, observation: Observation) -> tuple[int, float, float]:
         with torch.no_grad():
-            dist = self.actor(observation)
-            value = self.critic(observation)
+            dist, value = self.ac.dist_and_value(observation)
             action = dist.sample()
-
-            probs = torch.squeeze(dist.log_prob(action)).item()
-            action = int(torch.squeeze(action).item())
-            value = torch.squeeze(value).item()
-
-        return action, probs, value
+            logp = dist.log_prob(action)
+        return int(action.item()), float(logp.item()), float(value.item())
 
     def learn(self):
         if self.frozen:
@@ -224,8 +203,7 @@ class PPOAgent:
                 old_probs = torch.tensor(old_prob_arr[batch]).to(self.device)
                 actions = torch.tensor(action_arr[batch]).to(self.device)
 
-                dist = self.actor(states)
-                critic_value = self.critic(states)
+                dist, critic_value = self.ac.dist_and_value(states)
 
                 critic_value = torch.squeeze(critic_value)
 
@@ -242,18 +220,11 @@ class PPOAgent:
 
                 total_loss = actor_loss + 0.5 * critic_loss - 0.005 * entropy
 
-                self.actor.optimizer.zero_grad(set_to_none=True)
-                self.critic.optimizer.zero_grad(set_to_none=True)
-
+                self.optimizer.zero_grad(set_to_none=True)
                 total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.ac.parameters(), 0.5)
+                self.optimizer.step()
 
-                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
-                torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
-
-                self.actor.optimizer.step()
-                self.critic.optimizer.step()
-
-                # Additional stats
                 entropy_dist.append(entropy.item())
                 actor_loss_dist.append(actor_loss.item())
                 critic_loss_dist.append(critic_loss.item())
