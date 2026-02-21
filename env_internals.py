@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from misc_utils import greedy_distance
 
+from custom_types import Action, Move, ActionType
+
 
 class BoardsImplementation:
     def __init__(self, size: int, n_landmarks: int, n_clues: int, n_questions: int, linked_shadows: bool = True, seed: int | None = None):
@@ -30,28 +32,34 @@ class BoardsImplementation:
         self.linked_shadows = linked_shadows # Should shadows being cast by clue and question objects move with them? 
         # Passing in False results in shadows being frozen in their initial position.
         self.distance_func = greedy_distance
-        
-        self.sender_agent_actions = list()
-        self.sender_agent_actions.append(None) # Do nothing action.
-        for i in range(n_clues): # Sender agent can only move clue objects on board 1.
-            self.sender_agent_actions.append(("clue", i, np.array([0, -1]))) # Up
-            self.sender_agent_actions.append(("clue", i, np.array([0, 1]))) # Down
-            self.sender_agent_actions.append(("clue", i, np.array([-1, 0]))) # Left
-            self.sender_agent_actions.append(("clue", i, np.array([1, 0]))) # Right
-            
-        self.receiver_agent_actions = list()
-        self.receiver_agent_actions.append(None) # Do nothing action.
-        for i in range(n_landmarks): # Receiver agent can move guess objects on board 2.
-            self.receiver_agent_actions.append(("guess", i, np.array([0, -1]))) # Up
-            self.receiver_agent_actions.append(("guess", i, np.array([0, 1]))) # Down
-            self.receiver_agent_actions.append(("guess", i, np.array([-1, 0]))) # Left
-            self.receiver_agent_actions.append(("guess", i, np.array([1, 0]))) # Right
-        for i in range(n_questions): # Receiver agent can also move question objects on board 2.
-            self.receiver_agent_actions.append(("question", i, np.array([0, -1]))) # Up
-            self.receiver_agent_actions.append(("question", i, np.array([0, 1]))) # Down
-            self.receiver_agent_actions.append(("question", i, np.array([-1, 0]))) # Left
-            self.receiver_agent_actions.append(("question", i, np.array([1, 0]))) # Right
-        
+
+        # None is "do nothing" action
+        self.sender_agent_actions = [None]
+        for i in range(n_clues):
+            self.sender_agent_actions.extend([
+                Action(ActionType.CLUE, i, Move(0, -1)),
+                Action(ActionType.CLUE, i, Move(0, 1)),
+                Action(ActionType.CLUE, i, Move(-1, 0)),
+                Action(ActionType.CLUE, i, Move(1, 0)),
+            ])
+
+        self.receiver_agent_actions = [None]
+        for i in range(n_landmarks):
+            self.receiver_agent_actions.extend([
+                Action(ActionType.GUESS, i, Move(0, -1)),
+                Action(ActionType.GUESS, i, Move(0, 1)),
+                Action(ActionType.GUESS, i, Move(-1, 0)),
+                Action(ActionType.GUESS, i, Move(1, 0)),
+            ])
+
+        for i in range(n_questions):
+            self.receiver_agent_actions.extend([
+                Action(ActionType.QUESTION, i, Move(0, -1)),
+                Action(ActionType.QUESTION, i, Move(0, 1)),
+                Action(ActionType.QUESTION, i, Move(-1, 0)),
+                Action(ActionType.QUESTION, i, Move(1, 0)),
+            ])
+
         self._calculate_neutral_distance()
         self.populate_boards() # Assign positions to objects on the boards.
     
@@ -71,7 +79,31 @@ class BoardsImplementation:
             distances.append(distance)
             
         self.neutral_distance = max(sum(distances) / n, 0.5)
-        
+
+    def _try_move_in_list(
+            self,
+            moving: list[tuple[int, int]],
+            object_number: int,
+            move: Move,
+            *,
+            blocked_by: list[tuple[int, int]] = (),
+    ) -> None:
+        old_position = moving[object_number]
+        new_position = (old_position[0] + move.dx, old_position[1] + move.dy)
+
+        if not (0 <= new_position[0] < self.size and 0 <= new_position[1] < self.size):
+            self.useless_action_flag = True
+            return
+
+        if new_position in blocked_by:
+            self.useless_action_flag = True
+            return
+
+        if new_position in moving and new_position != old_position:
+            self.useless_action_flag = True
+            return
+
+        moving[object_number] = new_position
     
     def populate_boards(self): # Could also be used to reset the environment to a random state.
         # Create mixed up lists of coordinates for both boards to get non repeating positions for random placements of the objects.
@@ -127,33 +159,28 @@ class BoardsImplementation:
             board2_img[y, x, 2] = 255 # Shadows on channel 2. (Blue)
             # Shadows can overlap with other objects.
         return board2_img
-    
-    def sender_agent_action(self, action_index: int):
+
+    def sender_agent_action(self, action_index: int) -> None:
         if action_index < 0 or action_index >= len(self.sender_agent_actions):
-            raise ValueError(f"Sender agent does not have an action with index: {action_index}.")
+            raise ValueError(f"Sender agent does not have action index {action_index}.")
+
         action = self.sender_agent_actions[action_index]
         self.useless_action_flag = False
         if action is None:
             self.useless_action_flag = True
             return
-        object_type, object_number, move_direction = action
-        if object_type == "clue":
-            old_position = self.board1_clues[object_number]
-            new_position = tuple(old_position + move_direction)
-            if new_position[0] < 0 or new_position[0] >= self.size or new_position[1] < 0 or new_position[1] >= self.size:
-                self.useless_action_flag = True
-                return # Avoiding getting off the board.
-            if new_position in self.board1_landmarks or new_position in self.board1_clues:
-                self.useless_action_flag = True
-                return # Collision avoidance.
-            # All returns until now didn't change anything on the boards.
-            # That's because objects can't be pushed off the board or into other non-shadow objects.
-            self.board1_clues.pop(object_number)
-            self.board1_clues.append(new_position)
-            self.board1_clues.sort() # Unsure about that.
-            # It makes the control scheme not dependant on previous actions, but changes which actions correspond to which objects.
-            
-    def receiver_agent_action(self, action_index: int):
+
+        if action.object_type != ActionType.CLUE:
+            raise RuntimeError(f"Unexpected object_type for sender: {action.object_type}")
+
+        self._try_move_in_list(
+            self.board1_clues,
+            action.object_number,
+            action.move,
+            blocked_by=self.board1_landmarks,
+        )
+
+    def receiver_agent_action(self, action_index: int) -> None:
         if action_index < 0 or action_index >= len(self.receiver_agent_actions):
             raise ValueError(f"Receiver agent does not have an action with index {action_index}.")
         action = self.receiver_agent_actions[action_index]
@@ -161,37 +188,23 @@ class BoardsImplementation:
         if action is None:
             self.useless_action_flag = True
             return
-        object_type, object_number, move_direction = action
-        if object_type == "question":
-            old_position = self.board2_questions[object_number]
-            new_position = tuple(old_position + move_direction)
-            if new_position[0] < 0 or new_position[0] >= self.size or new_position[1] < 0 or new_position[1] >= self.size:
-                self.useless_action_flag = True
-                return # Avoiding getting off the board.
-            if new_position in self.board2_guesses or new_position in self.board2_questions:
-                self.useless_action_flag = True
-                return # Collision avoidance.
-            # All returns until now didn't change anything on the boards.
-            # That's because objects can't be pushed off the board or into other non-shadow objects.
-            self.board2_questions.pop(object_number)
-            self.board2_questions.append(new_position)
-            self.board2_questions.sort() # Unsure about that.
-            # It makes the control scheme not dependant on previous actions, but changes which actions correspond to which objects.
-        elif object_type == "guess":
-            old_position = self.board2_guesses[object_number]
-            new_position = tuple(old_position + move_direction)
-            if new_position[0] < 0 or new_position[0] >= self.size or new_position[1] < 0 or new_position[1] >= self.size:
-                self.useless_action_flag = True
-                return # Avoiding getting off the board.
-            if new_position in self.board2_guesses or new_position in self.board2_questions:
-                self.useless_action_flag = True
-                return # Collision avoidance.
-            # All returns until now didn't change anything on the boards.
-            # That's because objects can't be pushed off the board or into other non-shadow objects.
-            self.board2_guesses.pop(object_number)
-            self.board2_guesses.append(new_position)
-            self.board2_guesses.sort() # Unsure about that.
-            # It makes the control scheme not dependant on previous actions, but changes which actions correspond to which objects.
+
+        if action.object_type == ActionType.QUESTION:
+            self._try_move_in_list(
+                self.board2_questions,
+                action.object_number,
+                action.move,
+                blocked_by=self.board2_guesses,
+            )
+        elif action.object_type == ActionType.GUESS:
+            self._try_move_in_list(
+                self.board2_guesses,
+                action.object_number,
+                action.move,
+                blocked_by=self.board2_questions,
+            )
+        else:
+            raise RuntimeError(f"Unexpected object_type: {action.object_type}")
 
     def draw_boards(self):
         """Returns the current state of the boards as a nice, low-quality image with a boring, gray frame."""

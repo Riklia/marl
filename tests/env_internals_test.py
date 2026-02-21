@@ -354,3 +354,23 @@ def test_env_deterministic_given_seed_and_actions():
         assert env1.board1_clues == env2.board1_clues
         assert env1.useless_action_flag == env2.useless_action_flag
         assert np.array_equal(env1.sender_agent_view(), env2.sender_agent_view())
+
+def test_sender_action_preserves_clue_identity_order():
+    env = BoardsImplementation(size=5, n_landmarks=1, n_clues=2, n_questions=0, seed=1)
+    env.board1_landmarks = [(4, 4)]
+    # unsorted on purpose
+    env.board1_clues = [(3, 0), (1, 0)]
+
+    # clue0 down
+    env.sender_agent_action(2)
+
+    assert env.board1_clues == [(3, 1), (1, 0)]
+
+def test_receiver_action_preserves_guess_identity_order():
+    env = BoardsImplementation(size=5, n_landmarks=2, n_clues=1, n_questions=0, seed=1)
+    env.board2_questions = []
+    env.board2_guesses = [(3, 0), (1, 0)]
+
+    # guess0 DOWN
+    env.receiver_agent_action(2)
+    assert env.board2_guesses == [(3, 1), (1, 0)]
