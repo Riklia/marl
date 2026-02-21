@@ -92,7 +92,7 @@ class ActorNetwork(nn.Module):
             nn.Linear(hidden_size, n_actions),
         )
 
-        self.optimizer = optim.SGD(self.parameters(), lr = alpha) # type: ignore
+        self.optimizer = optim.Adam(self.parameters(), lr = alpha) # type: ignore
 
     def forward(self, observation: Observation):
         current_board = observation.current_board
@@ -241,9 +241,15 @@ class PPOAgent:
                 entropy = dist.entropy().mean()
 
                 total_loss = actor_loss + 0.5 * critic_loss - 0.005 * entropy
-                self.actor.optimizer.zero_grad()
-                self.critic.optimizer.zero_grad()
+
+                self.actor.optimizer.zero_grad(set_to_none=True)
+                self.critic.optimizer.zero_grad(set_to_none=True)
+
                 total_loss.backward()
+
+                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
+                torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
+
                 self.actor.optimizer.step()
                 self.critic.optimizer.step()
 
