@@ -21,7 +21,8 @@ def env5x5():
 def test_wrapper_sender_observe_shapes_dtypes_ranges(env5x5):
     w = BoardsWrapper(env5x5, max_moves=10, history_len=3, instant_multiplier=1.0, end_multiplier=1.0, device="cpu")
 
-    cur, prev, prog = w.sender_observe()
+    obs = w.sender_observe()
+    cur, prev, prog = obs.current_board, obs.previous_boards, obs.progress
 
     assert isinstance(cur, torch.Tensor)
     assert isinstance(prev, torch.Tensor)
@@ -49,7 +50,8 @@ def test_wrapper_sender_observe_shapes_dtypes_ranges(env5x5):
 def test_wrapper_receiver_observe_shapes(env5x5):
     w = BoardsWrapper(env5x5, max_moves=10, history_len=2, instant_multiplier=1.0, end_multiplier=1.0, device="cpu")
 
-    cur, prev, prog = w.receiver_observe()
+    obs = w.sender_observe()
+    cur, prev, prog = obs.current_board, obs.previous_boards, obs.progress
 
     assert cur.shape == (1, 3, env5x5.size, env5x5.size)
     assert prev.shape == (1, 3 * 2, env5x5.size, env5x5.size)
@@ -75,12 +77,14 @@ def test_wrapper_history_buffer_rolls(env5x5):
     w = BoardsWrapper(env5x5, max_moves=10, history_len=3, instant_multiplier=1.0, end_multiplier=1.0, device="cpu")
 
     # At init, history contains zeros
-    cur0, prev0, _ = w.sender_observe()
+    obs0 = w.sender_observe()
+    cur0, prev0, _ = obs0.current_board, obs0.previous_boards, obs0.progress
     assert torch.all(prev0.isfinite())
 
     # Take a step; the previous buffer should now include the last board at the front (most recent)
     w.sender_act(0)
-    cur1, prev1, _ = w.sender_observe()
+    obs1 = w.sender_observe()
+    cur1, prev1, _ = obs1.current_board, obs1.previous_boards, obs1.progress
 
     # prev1 is [board_{t-1}, board_{t-2}, board_{t-3}] concatenated along channel
     # The most recent previous (t-1) should equal current from just-before step.
@@ -92,15 +96,15 @@ def test_wrapper_history_buffer_rolls(env5x5):
 def test_wrapper_progress_increases_with_steps(env5x5):
     w = BoardsWrapper(env5x5, max_moves=4, history_len=1, instant_multiplier=1.0, end_multiplier=1.0, device="cpu")
 
-    _, _, p0 = w.sender_observe()
+    p0 = w.sender_observe().progress.item()
     w.sender_act(0)
-    _, _, p1 = w.sender_observe()
+    p1 = w.sender_observe().progress.item()
     w.sender_act(0)
-    _, _, p2 = w.sender_observe()
+    p2 = w.sender_observe().progress.item()
 
-    assert float(p1.item()) > float(p0.item())
-    assert float(p2.item()) > float(p1.item())
-    assert float(p2.item()) <= 1.0
+    assert p1 > p0
+    assert p2 > p1
+    assert p2 <= 1.0
 
 
 def test_wrapper_done_and_final_reward_scaling(env5x5):
