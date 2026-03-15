@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 from collections import deque
-from collections.abc import Sequence
 from typing import Final
 
 
@@ -18,7 +17,8 @@ class BoardsWrapper:
             history_len: int,
             instant_multiplier: float,
             end_multiplier: float,
-            device: str = "cpu"
+            device: str = "cpu",
+            perf_epsilon: float = 1e-6,
     ) -> None:
         self.env = env
         if max_moves < 1:
@@ -46,6 +46,7 @@ class BoardsWrapper:
 
         self.num_moves: int = 0
         self.done: bool = False
+        self.perf_epsilon: float = perf_epsilon
         self.animation_frames: list[np.ndarray] = []
         self.final_reward: float | None = None
         self.final_performance: float | None = None
@@ -102,11 +103,17 @@ class BoardsWrapper:
 
         return Observation(current_board=cur, previous_boards=prev, progress=prog)
     
-    def _end_episode(self) -> None:
+    def _end_episode(self, final_reward=None, final_perf=None) -> None:
         self.done = True
-        final_reward, final_perf = self.env.reward_function()
+        if final_reward is None or final_perf is None:
+            final_reward, final_perf = self.env.reward_function()
         self.final_reward = float(final_reward) * self.end_multiplier
         self.final_performance = float(final_perf)
+
+    def _maybe_early_exit_on_perfect_guess(self) -> None:
+        r, perf = self.env.reward_function()
+        if float(perf) >= 1.0 - self.perf_epsilon:
+            self._end_episode(r, perf)
 
     def _instant_reward(self, action_history: deque[int], board_history: deque[np.ndarray]) -> float:
         if False not in (board_history[-1] * self._color_filter == board_history[-3] * self._color_filter):
@@ -148,12 +155,15 @@ class BoardsWrapper:
 
         instant_reward = self._instant_reward(self.sender_action_history, self.sender_board_history)
 
-        if self.num_moves >= self.max_moves:
+        if not self.done:
+            self._maybe_early_exit_on_perfect_guess()
+
+        if not self.done and self.num_moves >= self.max_moves:
             self._end_episode()
 
         self.animation_frames.append(self.env.draw_boards())
         return instant_reward, self.done
-    
+
     def receiver_act(self, action: int) -> tuple[float, bool]:
         if self.done:
             raise RuntimeError("The action limit was exhausted. Reset the environment.")
@@ -161,12 +171,15 @@ class BoardsWrapper:
 
         self.receiver_board_history.append(self.env.receiver_agent_view())
         self.receiver_action_history.append(action)
-        
+
         self.env.receiver_agent_action(action)
-        
+
         instant_reward = self._instant_reward(self.receiver_action_history, self.receiver_board_history)
 
-        if self.num_moves >= self.max_moves:
+        if not self.done:
+            self._maybe_early_exit_on_perfect_guess()
+
+        if not self.done and self.num_moves >= self.max_moves:
             self._end_episode()
 
         self.animation_frames.append(self.env.draw_boards())

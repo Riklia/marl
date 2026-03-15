@@ -159,3 +159,25 @@ def test_wrapper_smoke_rollout_sender_and_receiver(env5x5):
         assert isinstance(d_r, bool)
         if d_r:
             break
+
+def test_wrapper_early_exit_on_perfect_guess_after_sender_act(env5x5, monkeypatch):
+    # Force "perfect guess" signal from env at any time
+    monkeypatch.setattr(env5x5, "reward_function", lambda: (2.0, 1.0))
+
+    w = BoardsWrapper(env5x5, max_moves=10, history_len=2, instant_multiplier=1.0, end_multiplier=3.0, device="cpu")
+
+    assert w.done is False
+    r, done = w.sender_act(0)
+
+    # Should terminate early (before exhausting max_moves)
+    assert done is True
+    assert w.done is True
+    assert w.num_moves == 1
+
+    assert w.get_final_reward() == 2.0 * 3.0
+    assert w.get_final_performance() == 1.0
+
+    with pytest.raises(RuntimeError):
+        w.receiver_act(0)
+    with pytest.raises(RuntimeError):
+        w.sender_act(0)
