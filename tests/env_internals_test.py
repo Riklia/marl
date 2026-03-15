@@ -374,3 +374,147 @@ def test_receiver_action_preserves_guess_identity_order():
     # guess0 DOWN
     env.receiver_agent_action(2)
     assert env.board2_guesses == [(3, 1), (1, 0)]
+
+def test_invalid_receiver_goal_visibility_mode_raises():
+    with pytest.raises(ValueError, match="receiver_goal_visibility_mode"):
+        BoardsImplementation(
+            size=4,
+            n_landmarks=2,
+            n_clues=1,
+            n_questions=0,
+            seed=123,
+            receiver_goal_visibility_mode="bad_mode",
+            receiver_goal_visibility_ratio=0.0,
+            disable_sender=False,
+        )
+
+
+def test_negative_receiver_goal_visibility_ratio_raises():
+    with pytest.raises(ValueError, match="receiver_goal_visibility_ratio"):
+        BoardsImplementation(
+            size=4,
+            n_landmarks=2,
+            n_clues=1,
+            n_questions=0,
+            seed=123,
+            receiver_goal_visibility_mode="partial",
+            receiver_goal_visibility_ratio=-0.1,
+            disable_sender=False,
+        )
+
+
+def test_ratio_above_one_raises():
+    with pytest.raises(ValueError, match="receiver_goal_visibility_ratio"):
+        BoardsImplementation(
+            size=4,
+            n_landmarks=2,
+            n_clues=1,
+            n_questions=0,
+            seed=123,
+            receiver_goal_visibility_mode="partial",
+            receiver_goal_visibility_ratio=1.1,
+            disable_sender=False,
+        )
+
+
+def test_full_visibility_exposes_all_landmarks():
+    env = BoardsImplementation(
+        size=4,
+        n_landmarks=3,
+        n_clues=1,
+        n_questions=0,
+        seed=123,
+        receiver_goal_visibility_mode="full",
+        receiver_goal_visibility_ratio=1.0,
+        disable_sender=True,
+    )
+
+    view = env.receiver_agent_view()
+
+    for x, y in env.board1_landmarks:
+        assert view[y, x, 2] == 255
+
+def test_no_visibility_hides_landmarks_when_sender_disabled():
+    env = BoardsImplementation(
+        size=4,
+        n_landmarks=3,
+        n_clues=1,
+        n_questions=0,
+        seed=123,
+        receiver_goal_visibility_mode="none",
+        receiver_goal_visibility_ratio=0.0,
+        disable_sender=True,
+    )
+
+    view = env.receiver_agent_view()
+
+    for x, y in env.board1_landmarks:
+        assert view[y, x, 2] == 0
+
+
+def test_partial_visibility_exposes_only_subset():
+    env = BoardsImplementation(
+        size=4,
+        n_landmarks=4,
+        n_clues=1,
+        n_questions=0,
+        seed=123,
+        receiver_goal_visibility_mode="partial",
+        receiver_goal_visibility_ratio=0.5,
+        disable_sender=True,
+    )
+
+    visible_landmarks = env._receiver_visible_landmarks()
+    assert len(visible_landmarks) == 2
+
+    view = env.receiver_agent_view()
+
+    for x, y in visible_landmarks:
+        assert view[y, x, 2] == 255
+
+    hidden_landmarks = [pos for pos in env.board1_landmarks if pos not in visible_landmarks]
+    for x, y in hidden_landmarks:
+        assert view[y, x, 2] == 0
+
+def test_no_visibility_hides_landmarks_when_sender_disabled():
+    env = BoardsImplementation(
+        size=4,
+        n_landmarks=3,
+        n_clues=1,
+        n_questions=0,
+        seed=123,
+        receiver_goal_visibility_mode="none",
+        receiver_goal_visibility_ratio=0.0,
+        disable_sender=True,
+    )
+
+    view = env.receiver_agent_view()
+
+    for x, y in env.board1_landmarks:
+        assert view[y, x, 2] == 0
+
+
+def test_partial_visibility_exposes_only_subset():
+    env = BoardsImplementation(
+        size=4,
+        n_landmarks=4,
+        n_clues=1,
+        n_questions=0,
+        seed=123,
+        receiver_goal_visibility_mode="partial",
+        receiver_goal_visibility_ratio=0.5,
+        disable_sender=True,
+    )
+
+    visible_landmarks = env._receiver_visible_landmarks()
+    assert len(visible_landmarks) == 2
+
+    view = env.receiver_agent_view()
+
+    for x, y in visible_landmarks:
+        assert view[y, x, 2] == 255
+
+    hidden_landmarks = [pos for pos in env.board1_landmarks if pos not in visible_landmarks]
+    for x, y in hidden_landmarks:
+        assert view[y, x, 2] == 0
+

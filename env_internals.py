@@ -6,7 +6,18 @@ from custom_types import Action, Move, ActionType
 
 
 class BoardsImplementation:
-    def __init__(self, size: int, n_landmarks: int, n_clues: int, n_questions: int, linked_shadows: bool = True, seed: int | None = None):
+    def __init__(
+            self, 
+            size: int,
+            n_landmarks: int, 
+            n_clues: int,
+            n_questions: int,
+            linked_shadows: bool = True, 
+            seed: int | None = None,
+            receiver_goal_visibility_mode="none",
+            receiver_goal_visibility_ratio=0.0,
+            disable_sender=False,
+        ):
         if size < 1:
             raise ValueError("The board size should be positive.")
         if n_landmarks < 1:
@@ -21,6 +32,12 @@ class BoardsImplementation:
             seed = np.random.randint(42, 45954)
         elif seed < 0:
             raise ValueError("The seed should be non negative.")
+        if receiver_goal_visibility_mode not in {"none", "full", "partial"}:
+            raise ValueError(
+                "receiver_goal_visibility_mode must be one of: 'none', 'full', 'partial'."
+            )
+        if not (0.0 <= float(receiver_goal_visibility_ratio) <= 1.0):
+            raise ValueError("receiver_goal_visibility_ratio must be in [0.0, 1.0].")
         
         self.rng = np.random.default_rng(seed) # Creating an rng engine for consistency in board generation. 
         # Not guaranteed to be consistent between different versions of numpy.
@@ -32,6 +49,10 @@ class BoardsImplementation:
         self.linked_shadows = linked_shadows # Should shadows being cast by clue and question objects move with them? 
         # Passing in False results in shadows being frozen in their initial position.
         self.distance_func = greedy_distance
+
+        self.receiver_goal_visibility_mode = receiver_goal_visibility_mode
+        self.receiver_goal_visibility_ratio = float(receiver_goal_visibility_ratio)
+        self.disable_sender = bool(disable_sender)
 
         # None is "do nothing" action
         self.sender_agent_actions = [None]
@@ -104,6 +125,21 @@ class BoardsImplementation:
             return
 
         moving[object_number] = new_position
+
+    def _receiver_visible_landmarks(self) -> list[tuple[int, int]]:
+        if self.receiver_goal_visibility_mode == "none":
+            return []
+
+        if self.receiver_goal_visibility_mode == "full":
+            return list(self.board1_landmarks)
+
+        # partial visibility
+        n_visible = int(round(self.n_landmarks * self.receiver_goal_visibility_ratio))
+        n_visible = max(0, min(self.n_landmarks, n_visible))
+        if n_visible == 0:
+            return []
+
+        return list(self.board1_landmarks[:n_visible])
     
     def populate_boards(self): # Could also be used to reset the environment to a random state.
         # Create mixed up lists of coordinates for both boards to get non repeating positions for random placements of the objects.
@@ -154,18 +190,25 @@ class BoardsImplementation:
             board2_img[y, x, 0] = 255 # Guesses on channel 0. (Red)
         for x, y in self.board2_questions:
             board2_img[y, x, 1] = 255 # Questions on channel 1. (Green)
-        for x, y in (self.board1_clues if self.linked_shadows else self.board2_c_shadows):
-            # If the shadows are linked we can just use the positions of objects generating them on the other board.
-            board2_img[y, x, 2] = 255 # Shadows on channel 2. (Blue)
-            # Shadows can overlap with other objects.
+        if not self.disable_sender:
+            for x, y in (self.board1_clues if self.linked_shadows else self.board2_c_shadows):
+                # If the shadows are linked we can just use the positions of objects generating them on the other board.
+                board2_img[y, x, 2] = 255 # Shadows on channel 2. (Blue)
+                # Shadows can overlap with other objects.
+        for x, y in self._receiver_visible_landmarks():
+            board2_img[y, x, 2] = 255  # Visible goals also shown on channel 2
         return board2_img
 
     def sender_agent_action(self, action_index: int) -> None:
         if action_index < 0 or action_index >= len(self.sender_agent_actions):
             raise ValueError(f"Sender agent does not have action index {action_index}.")
 
-        action = self.sender_agent_actions[action_index]
         self.useless_action_flag = False
+        if self.disable_sender:
+            self.useless_action_flag = True
+            return
+
+        action = self.sender_agent_actions[action_index]
         if action is None:
             self.useless_action_flag = True
             return

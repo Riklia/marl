@@ -168,6 +168,9 @@ def build_env(game_cfg: dict[str, Any], device: str) -> BoardsWrapper:
         game_cfg["n_clues"],
         game_cfg["n_questions"],
         seed=game_cfg.get("env_seed"),
+        receiver_goal_visibility_mode=game_cfg.get("receiver_goal_visibility_mode", "none"),
+        receiver_goal_visibility_ratio=game_cfg.get("receiver_goal_visibility_ratio", 0.0),
+        disable_sender=game_cfg.get("disable_sender", False),
     )
     return BoardsWrapper(
         env_internals,
