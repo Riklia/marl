@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default=None,
+        default="cpu",
         help="Optional override for config device (e.g. cpu/cuda/cuda:0). If none, inferred by PyTorch.",
     )
     parser.add_argument(
