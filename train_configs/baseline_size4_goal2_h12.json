@@ -1,0 +1,38 @@
+{
+  "name": "baseline_size4_goal2_h12",
+  "game": {
+    "size": 4,
+    "n_landmarks": 2,
+    "n_clues": 2,
+    "n_questions": 0,
+    "max_moves": 64,
+    "history_len": 12,
+    "instant_reward_multiplier": 2.0,
+    "end_reward_multiplier": 10.0
+  },
+  "training": {
+    "batch_size": 32,
+    "n_epochs": 10,
+    "n_episodes": 2000,
+    "training_epochs": 5,
+    "gamma": 0.999,
+    "alpha": 0.00001,
+    "gae_lambda": 0.95,
+    "policy_clip": 0.1
+  },
+  "seeds": {
+    "env_seed": 12,
+    "sender_seed": 135,
+    "receiver_seed": 246
+  },
+  "agents": {
+    "sender": {
+      "kind": "ppo",
+      "hidden_size": 512
+    },
+    "receiver": {
+      "kind": "ppo",
+      "hidden_size": 512
+    }
+  }
+}
