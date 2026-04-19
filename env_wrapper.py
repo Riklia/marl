@@ -19,6 +19,7 @@ class BoardsWrapper:
             end_multiplier: float,
             device: str = "cpu",
             perf_epsilon: float = 1e-6,
+            shaping_multiplier: float = 0.0,
     ) -> None:
         self.env = env
         if max_moves < 1:
@@ -42,6 +43,7 @@ class BoardsWrapper:
 
         self.instant_multiplier: float = instant_multiplier
         self.end_multiplier: float = end_multiplier
+        self.shaping_multiplier: float = shaping_multiplier
         self.device: str = device
 
         self.num_moves: int = 0
@@ -169,12 +171,19 @@ class BoardsWrapper:
             raise RuntimeError("The action limit was exhausted. Reset the environment.")
         self.num_moves += 1
 
+        if self.shaping_multiplier != 0.0:
+            pre_dist = self.env.distance_func(self.env.board1_landmarks, self.env.board2_guesses)
+
         self.env.receiver_agent_action(action)
 
         self.receiver_board_history.append(self.env.receiver_agent_view())
         self.receiver_action_history.append(action)
 
         instant_reward = self._instant_reward(self.receiver_action_history, self.receiver_board_history)
+
+        if self.shaping_multiplier != 0.0:
+            post_dist = self.env.distance_func(self.env.board1_landmarks, self.env.board2_guesses)
+            instant_reward += (pre_dist - post_dist) * self.shaping_multiplier
 
         if not self.done:
             self._maybe_early_exit_on_perfect_guess()

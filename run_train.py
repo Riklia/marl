@@ -179,6 +179,7 @@ def build_env(game_cfg: dict[str, Any], device: str) -> BoardsWrapper:
         game_cfg["instant_reward_multiplier"],
         game_cfg["end_reward_multiplier"],
         device,
+        shaping_multiplier=float(game_cfg.get("shaping_multiplier", 0.0)),
     )
 
 

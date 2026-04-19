@@ -1,0 +1,56 @@
+{
+  "name": "navigation_only_4x4_1",
+  "base": {
+    "game": {
+      "size": 4,
+      "n_questions": 0,
+      "max_moves": 64,
+      "history_len": 32,
+      "instant_reward_multiplier": 1.0,
+      "end_reward_multiplier": 12.0,
+      "shaping_multiplier": 1.0
+    },
+    "training": {
+      "batch_size": 64,
+      "n_epochs": 5,
+      "learn_interval": 32,
+      "n_episodes": 1500,
+      "training_epochs": 4,
+      "gamma": 0.99,
+      "alpha": 0.0001,
+      "gae_lambda": 0.95,
+      "policy_clip": 0.1
+    },
+    "agents": {
+      "sender": {
+        "kind": "ppo",
+        "hidden_size": 64
+      },
+      "receiver": {
+        "kind": "ppo",
+        "hidden_size": 64
+      }
+    },
+    "seeds": {
+      "env_seed": 12,
+      "sender_seed": 135,
+      "receiver_seed": 246
+    }
+  },
+  "curriculum": [
+    {
+      "name": "stage_01_one_goal",
+      "game": {
+        "n_landmarks": 1,
+        "n_clues": 1,
+        "receiver_goal_visibility_mode": "full",
+        "disable_sender": true,
+        "max_moves": 16
+      },
+      "training": {
+        "n_episodes": 3000,
+        "training_epochs": 10
+      }
+    }
+  ]
+}
