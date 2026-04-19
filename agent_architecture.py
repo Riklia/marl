@@ -67,9 +67,9 @@ class PPOMemory:
         self.vals = []
 
 class SharedEncoder(nn.Module):
-    def __init__(self, board_size: int, history_len: int):
+    def __init__(self, board_size: int, history_len: int, n_channels_per_frame: int):
         super().__init__()
-        self.channels = 3 * (history_len + 1)
+        self.channels = n_channels_per_frame * (history_len + 1)
         channels = self.channels
         self.conv = nn.Sequential(
             nn.Conv2d(channels, channels * 2, kernel_size=3, padding=1),
@@ -87,9 +87,9 @@ class SharedEncoder(nn.Module):
         return self.conv(x)
 
 class ActorCritic(nn.Module):
-    def __init__(self, board_size: int, history_len: int, n_actions: int, hidden_size: int):
+    def __init__(self, board_size: int, history_len: int, n_actions: int, hidden_size: int, n_channels_per_frame: int):
         super().__init__()
-        self.encoder = SharedEncoder(board_size, history_len)
+        self.encoder = SharedEncoder(board_size, history_len, n_channels_per_frame)
 
         fc_in = self.encoder.out_dim + 1  # + progress scalar
 
@@ -133,7 +133,7 @@ class AgentParams:
         self.seed = seed
 
 class PPOAgent:
-    def __init__(self, board_size, history_len, n_actions, hidden_size, device: str = "cpu", params: AgentParams | None = None, frozen: bool = False):
+    def __init__(self, board_size, history_len, n_actions, hidden_size, device: str = "cpu", params: AgentParams | None = None, frozen: bool = False, n_channels_per_frame: int = 3):
         if params is None:
             self.params = AgentParams()
         else:
@@ -145,8 +145,9 @@ class PPOAgent:
         self.hidden_size = hidden_size
         self.device = device
         self.frozen = frozen
+        self.n_channels_per_frame = n_channels_per_frame
 
-        self.ac = ActorCritic(board_size, history_len, n_actions, hidden_size).to(device)
+        self.ac = ActorCritic(board_size, history_len, n_actions, hidden_size, n_channels_per_frame).to(device)
         self.optimizer = optim.Adam(self.ac.parameters(), lr=self.params.alpha)
         self.memory = PPOMemory(self.params.batch_size, self.params.seed)
         

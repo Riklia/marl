@@ -28,8 +28,9 @@ def test_wrapper_sender_observe_shapes_dtypes_ranges(env5x5):
     assert isinstance(prev, torch.Tensor)
     assert isinstance(prog, torch.Tensor)
 
-    assert cur.shape == (1, 3, env5x5.size, env5x5.size)
-    assert prev.shape == (1, 3 * 3, env5x5.size, env5x5.size)
+    n_ch = env5x5.n_sender_channels
+    assert cur.shape == (1, n_ch, env5x5.size, env5x5.size)
+    assert prev.shape == (1, n_ch * 3, env5x5.size, env5x5.size)
     assert prog.shape == (1, 1)
 
     assert cur.dtype == torch.float32
@@ -53,8 +54,9 @@ def test_wrapper_receiver_observe_shapes(env5x5):
     obs = w.sender_observe()
     cur, prev, prog = obs.current_board, obs.previous_boards, obs.progress
 
-    assert cur.shape == (1, 3, env5x5.size, env5x5.size)
-    assert prev.shape == (1, 3 * 2, env5x5.size, env5x5.size)
+    n_ch = env5x5.n_sender_channels
+    assert cur.shape == (1, n_ch, env5x5.size, env5x5.size)
+    assert prev.shape == (1, n_ch * 2, env5x5.size, env5x5.size)
     assert prog.shape == (1, 1)
 
 
@@ -90,7 +92,8 @@ def test_wrapper_history_buffer_rolls(env5x5):
     # The most recent previous (t-1) should equal current from just-before step.
     # We can compare against w.sender_board_history[-2] transformed by wrapper logic,
     # but simplest stable check: channels [0:3] of prev should match previous "current" tensor.
-    assert torch.allclose(prev1[:, 0:3, :, :], cur0, atol=0, rtol=0)
+    n_ch = env5x5.n_sender_channels
+    assert torch.allclose(prev1[:, 0:n_ch, :, :], cur0, atol=0, rtol=0)
 
 
 def test_wrapper_progress_increases_with_steps(env5x5):

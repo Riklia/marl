@@ -59,11 +59,13 @@ def test_training_runs_smoke():
     sender_agent = PPOAgent(size, 4, env.sender_n_actions, hidden_size, device,
                             AgentParams(gamma=gamma, alpha=alpha, gae_lambda=gae_lambda,
                                         policy_clip=policy_clip, batch_size=batch_size, n_epochs=n_epochs,
-                                        seed=sender_seed))
+                                        seed=sender_seed),
+                            n_channels_per_frame=env.sender_n_channels)
     receiver_agent = PPOAgent(size, 4, env.receiver_n_actions, hidden_size, device,
                               AgentParams(gamma=gamma, alpha=alpha, gae_lambda=gae_lambda,
                                           policy_clip=policy_clip, batch_size=batch_size,
-                                          n_epochs=n_epochs, seed=receiver_seed))
+                                          n_epochs=n_epochs, seed=receiver_seed),
+                              n_channels_per_frame=env.receiver_n_channels)
 
     stats = None
     for _ in range(training_epochs):

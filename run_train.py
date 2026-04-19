@@ -224,6 +224,7 @@ def build_agent(
         raise ValueError(f"Unsupported agent kind for '{role}': {kind}")
 
     n_actions = env.sender_n_actions if role == "sender" else env.receiver_n_actions
+    n_channels = env.sender_n_channels if role == "sender" else env.receiver_n_channels
     seed = agent_cfg.get("seed")
     params = build_agent_params(training_cfg, seed)
     hidden_size = infer_hidden_size(game_cfg, agent_cfg)
@@ -234,6 +235,7 @@ def build_agent(
         hidden_size,
         device,
         params,
+        n_channels_per_frame=n_channels,
     )
 
 

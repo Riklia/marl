@@ -430,9 +430,10 @@ def test_full_visibility_exposes_all_landmarks():
     )
 
     view = env.receiver_agent_view()
+    shadow_ch = env.n_receiver_channels - 1
 
     for x, y in env.board1_landmarks:
-        assert view[y, x, 2] == 255
+        assert view[y, x, shadow_ch] == 255
 
 def test_no_visibility_hides_landmarks_when_sender_disabled():
     env = BoardsImplementation(
@@ -468,13 +469,14 @@ def test_partial_visibility_exposes_only_subset():
     assert len(visible_landmarks) == 2
 
     view = env.receiver_agent_view()
+    shadow_ch = env.n_receiver_channels - 1
 
     for x, y in visible_landmarks:
-        assert view[y, x, 2] == 255
+        assert view[y, x, shadow_ch] == 255
 
     hidden_landmarks = [pos for pos in env.board1_landmarks if pos not in visible_landmarks]
     for x, y in hidden_landmarks:
-        assert view[y, x, 2] == 0
+        assert view[y, x, shadow_ch] == 0
 
 def test_no_visibility_hides_landmarks_when_sender_disabled():
     env = BoardsImplementation(
@@ -510,11 +512,12 @@ def test_partial_visibility_exposes_only_subset():
     assert len(visible_landmarks) == 2
 
     view = env.receiver_agent_view()
+    shadow_ch = env.n_receiver_channels - 1
 
     for x, y in visible_landmarks:
-        assert view[y, x, 2] == 255
+        assert view[y, x, shadow_ch] == 255
 
     hidden_landmarks = [pos for pos in env.board1_landmarks if pos not in visible_landmarks]
     for x, y in hidden_landmarks:
-        assert view[y, x, 2] == 0
+        assert view[y, x, shadow_ch] == 0
 

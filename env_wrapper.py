@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 from collections import deque
-from typing import Final
 
 
 from env_internals import BoardsImplementation
@@ -32,14 +31,17 @@ class BoardsWrapper:
 
         self.sender_n_actions: int = 1 + 4 * env.n_clues
         self.receiver_n_actions: int = 1 + 4 * env.n_questions + 4 * env.n_landmarks
+        self.sender_n_channels: int = env.n_sender_channels
+        self.receiver_n_channels: int = env.n_receiver_channels
 
         self.board_size: int = env.size
-        self.n_color_channels: Final[int] = 3
 
         self.store_n_states: int = max(history_len, 4)
 
-        # shape: [H,W,3] filter for numpy operations
-        self._color_filter: np.ndarray = np.array([[[1.0, 1.0, 0.0]] * self.board_size] * self.board_size)
+        # Per-agent filters: ones everywhere except the last channel (shadows/landmarks),
+        # so instant-reward detection ignores passive visual elements.
+        self._sender_color_filter: np.ndarray = self._make_filter(self.board_size, env.n_sender_channels)
+        self._receiver_color_filter: np.ndarray = self._make_filter(self.board_size, env.n_receiver_channels)
 
         self.instant_multiplier: float = instant_multiplier
         self.end_multiplier: float = end_multiplier
@@ -105,6 +107,12 @@ class BoardsWrapper:
 
         return Observation(current_board=cur, previous_boards=prev, progress=prog)
     
+    @staticmethod
+    def _make_filter(board_size: int, n_channels: int) -> np.ndarray:
+        f = np.ones((board_size, board_size, n_channels), dtype=np.float32)
+        f[:, :, -1] = 0.0  # ignore shadow / landmark channel
+        return f
+
     def _end_episode(self, final_reward=None, final_perf=None) -> None:
         self.done = True
         if final_reward is None or final_perf is None:
@@ -117,8 +125,8 @@ class BoardsWrapper:
         if float(perf) >= 1.0 - self.perf_epsilon:
             self._end_episode(r, perf)
 
-    def _instant_reward(self, action_history: deque[int], board_history: deque[np.ndarray]) -> float:
-        if False not in (board_history[-1] * self._color_filter == board_history[-3] * self._color_filter):
+    def _instant_reward(self, action_history: deque[int], board_history: deque[np.ndarray], color_filter: np.ndarray) -> float:
+        if False not in (board_history[-1] * color_filter == board_history[-3] * color_filter):
             return -1.0 * self.instant_multiplier
         if action_history[-1] == 0:
             return -0.2 * self.instant_multiplier
@@ -155,7 +163,7 @@ class BoardsWrapper:
         self.sender_board_history.append(self.env.sender_agent_view())
         self.sender_action_history.append(action)
 
-        instant_reward = self._instant_reward(self.sender_action_history, self.sender_board_history)
+        instant_reward = self._instant_reward(self.sender_action_history, self.sender_board_history, self._sender_color_filter)
 
         if not self.done:
             self._maybe_early_exit_on_perfect_guess()
@@ -179,7 +187,7 @@ class BoardsWrapper:
         self.receiver_board_history.append(self.env.receiver_agent_view())
         self.receiver_action_history.append(action)
 
-        instant_reward = self._instant_reward(self.receiver_action_history, self.receiver_board_history)
+        instant_reward = self._instant_reward(self.receiver_action_history, self.receiver_board_history, self._receiver_color_filter)
 
         if self.shaping_multiplier != 0.0:
             post_dist = self.env.distance_func(self.env.board1_landmarks, self.env.board2_guesses)

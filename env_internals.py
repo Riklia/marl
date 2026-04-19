@@ -172,31 +172,37 @@ class BoardsImplementation:
         self.start_distance = max(self.distance_func(self.board1_landmarks, self.board2_guesses), 0.5)
         self.useless_action_flag = False
         
+    @property
+    def n_sender_channels(self) -> int:
+        return self.n_landmarks + self.n_clues + 1  # landmark channels + clue channels + shadow channel
+
+    @property
+    def n_receiver_channels(self) -> int:
+        return self.n_landmarks + self.n_questions + 1  # guess channels + question channels + shadow channel
+
     def sender_agent_view(self): # Sender agent can only see board 1.
-        board1_img = np.zeros((self.size, self.size, 3), dtype = np.uint8)
-        for x, y in self.board1_landmarks:
-            board1_img[y, x, 0] = 255 # Landmarks on channel 0. (Red)
-        for x, y in self.board1_clues:
-            board1_img[y, x, 1] = 255 # Clues on channel 1. (Green)
+        board1_img = np.zeros((self.size, self.size, self.n_sender_channels), dtype=np.uint8)
+        for i, (x, y) in enumerate(self.board1_landmarks):
+            board1_img[y, x, i] = 255  # landmark i → channel i
+        for i, (x, y) in enumerate(self.board1_clues):
+            board1_img[y, x, self.n_landmarks + i] = 255  # clue i → channel n_landmarks+i
+        shadow_ch = self.n_landmarks + self.n_clues
         for x, y in (self.board2_questions if self.linked_shadows else self.board1_q_shadows):
-            # If the shadows are linked we can just use the positions of objects generating them on the other board.
-            board1_img[y, x, 2] = 255 # Shadows on channel 2. (Blue)
-            # Shadows can overlap with other objects.
+            board1_img[y, x, shadow_ch] = 255
         return board1_img
-    
+
     def receiver_agent_view(self): # Receiver agent can only see board 2.
-        board2_img = np.zeros((self.size, self.size, 3), dtype = np.uint8)
-        for x, y in self.board2_guesses:
-            board2_img[y, x, 0] = 255 # Guesses on channel 0. (Red)
-        for x, y in self.board2_questions:
-            board2_img[y, x, 1] = 255 # Questions on channel 1. (Green)
+        board2_img = np.zeros((self.size, self.size, self.n_receiver_channels), dtype=np.uint8)
+        for i, (x, y) in enumerate(self.board2_guesses):
+            board2_img[y, x, i] = 255  # guess i → channel i
+        for i, (x, y) in enumerate(self.board2_questions):
+            board2_img[y, x, self.n_landmarks + i] = 255  # question i → channel n_landmarks+i
+        shadow_ch = self.n_landmarks + self.n_questions
         if not self.disable_sender:
             for x, y in (self.board1_clues if self.linked_shadows else self.board2_c_shadows):
-                # If the shadows are linked we can just use the positions of objects generating them on the other board.
-                board2_img[y, x, 2] = 255 # Shadows on channel 2. (Blue)
-                # Shadows can overlap with other objects.
+                board2_img[y, x, shadow_ch] = 255
         for x, y in self._receiver_visible_landmarks():
-            board2_img[y, x, 2] = 255  # Visible goals also shown on channel 2
+            board2_img[y, x, shadow_ch] = 255
         return board2_img
 
     def sender_agent_action(self, action_index: int) -> None:
@@ -249,19 +255,30 @@ class BoardsImplementation:
         else:
             raise RuntimeError(f"Unexpected object_type: {action.object_type}")
 
+    @staticmethod
+    def _to_rgb(view: np.ndarray) -> np.ndarray:
+        n_ch = view.shape[2]
+        if n_ch == 3:
+            return view
+        rgb = np.zeros((view.shape[0], view.shape[1], 3), dtype=np.uint8)
+        rgb[:, :, :min(n_ch, 3)] = view[:, :, :3]
+        return rgb
+
     def draw_boards(self):
         """Returns the current state of the boards as a nice, low-quality image with a boring, gray frame."""
+        sender_rgb = self._to_rgb(self.sender_agent_view())
+        receiver_rgb = self._to_rgb(self.receiver_agent_view())
         image = np.concatenate((
-            np.zeros((1, self.size * 2 + 3, 3), dtype = np.uint8) + 100,
+            np.zeros((1, self.size * 2 + 3, 3), dtype=np.uint8) + 100,
             np.concatenate((
-                np.zeros((self.size, 1, 3), dtype = np.uint8) + 100,
-                self.sender_agent_view(),
-                np.zeros((self.size, 1, 3), dtype = np.uint8) + 100,
-                self.receiver_agent_view(),
-                np.zeros((self.size, 1, 3), dtype = np.uint8) + 100
-            ), axis = 1),
-            np.zeros((1, self.size * 2 + 3, 3), dtype = np.uint8) + 100
-        ), axis = 0)
+                np.zeros((self.size, 1, 3), dtype=np.uint8) + 100,
+                sender_rgb,
+                np.zeros((self.size, 1, 3), dtype=np.uint8) + 100,
+                receiver_rgb,
+                np.zeros((self.size, 1, 3), dtype=np.uint8) + 100
+            ), axis=1),
+            np.zeros((1, self.size * 2 + 3, 3), dtype=np.uint8) + 100
+        ), axis=0)
         return image
     
     def show_boards(self):
