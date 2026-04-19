@@ -75,8 +75,9 @@ def test_sender_view_shadow_logic(linked_shadows):
     img = env.sender_agent_view()
     assert img.shape == (4, 4, 3)
 
-    assert env_test_helpers.pixel_equal(img[0, 0], (255, 0, 0))
-    assert env_test_helpers.pixel_equal(img[0, 1], (0, 255, 0))
+    v = env._OBJ_VALUE_STEP  # value for the single object at index 0
+    assert env_test_helpers.pixel_equal(img[0, 0], (v, 0, 0))   # landmark 0
+    assert env_test_helpers.pixel_equal(img[0, 1], (0, v, 0))   # clue 0
     if linked_shadows:
         # Blue comes from board2_questions
         assert env_test_helpers.pixel_equal(img[0, 2], (0, 0, 255))
@@ -106,8 +107,9 @@ def test_receiver_view_shadow_logic(linked_shadows):
     img = env.receiver_agent_view()
     assert img.shape == (4, 4, 3)
 
-    assert env_test_helpers.pixel_equal(img[0, 0], (255, 0, 0))
-    assert env_test_helpers.pixel_equal(img[0, 1], (0, 255, 0))
+    v = env._OBJ_VALUE_STEP  # value for the single object at index 0
+    assert env_test_helpers.pixel_equal(img[0, 0], (v, 0, 0))   # guess 0
+    assert env_test_helpers.pixel_equal(img[0, 1], (0, v, 0))   # question 0
     if linked_shadows:
         # Blue from board1_clues
         assert env_test_helpers.pixel_equal(img[0, 2], (0, 0, 255))
