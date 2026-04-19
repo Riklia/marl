@@ -112,8 +112,7 @@ class ActorCritic(nn.Module):
         combined = torch.cat([z, observation.progress], dim=1)
         logits = self.actor_head(combined)
 
-        # Use detached features for critic
-        value = self.critic_head(torch.cat([z.detach(), observation.progress], dim=1)).squeeze(-1)
+        value = self.critic_head(torch.cat([z, observation.progress], dim=1)).squeeze(-1)
 
         return logits, value
 
