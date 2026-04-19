@@ -148,10 +148,10 @@ class BoardsWrapper:
             raise RuntimeError("The action limit was exhausted. Reset the environment.")
         self.num_moves += 1
 
+        self.env.sender_agent_action(action)
+
         self.sender_board_history.append(self.env.sender_agent_view())
         self.sender_action_history.append(action)
-
-        self.env.sender_agent_action(action)
 
         instant_reward = self._instant_reward(self.sender_action_history, self.sender_board_history)
 
@@ -169,10 +169,10 @@ class BoardsWrapper:
             raise RuntimeError("The action limit was exhausted. Reset the environment.")
         self.num_moves += 1
 
+        self.env.receiver_agent_action(action)
+
         self.receiver_board_history.append(self.env.receiver_agent_view())
         self.receiver_action_history.append(action)
-
-        self.env.receiver_agent_action(action)
 
         instant_reward = self._instant_reward(self.receiver_action_history, self.receiver_board_history)
 

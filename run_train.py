@@ -216,7 +216,8 @@ def build_agent(
 ):
     kind = agent_cfg.get("kind", "ppo").lower()
     if kind == "random":
-        return RandomAgent()
+        permitted_actions = list(range(env.sender_n_actions))
+        return RandomAgent(permitted_actions)
 
     if kind != "ppo":
         raise ValueError(f"Unsupported agent kind for '{role}': {kind}")
@@ -534,7 +535,8 @@ def run_stage(
     n_episodes = int(stage_cfg["training"]["n_episodes"])
     for epoch in range(training_epochs):
         print(f"  Training epoch {epoch + 1}/{training_epochs}...")
-        epoch_stats = train_agents(env, sender_agent, receiver_agent, n_episodes)
+        learn_interval = int(stage_cfg["training"].get("learn_interval", 32))
+        epoch_stats = train_agents(env, sender_agent, receiver_agent, n_episodes, learn_interval)
         merge_stats(stage_stats, epoch_stats)
 
     return stage_stats, sender_agent, receiver_agent

@@ -4,7 +4,7 @@ from agent_architecture import PPOAgent, RandomAgent
 from env_wrapper import BoardsWrapper
 
 
-def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, receiver_agent: PPOAgent | RandomAgent, n_episodes: int):
+def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, receiver_agent: PPOAgent | RandomAgent, n_episodes: int, learn_interval: int = 32):
     if (env.max_moves % 2) != 0:
         raise ValueError("The environment should be set to an even number of moves.")
     
@@ -103,18 +103,20 @@ def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, recei
         empty_actions_sender_dist.append(empty_action_sender)
         empty_actions_receiver_dist.append(empty_action_receiver)
 
-        if isinstance(sender_agent, PPOAgent):
-            entropy_dist, actor_loss_dist, critic_loss_dist, total_loss_dist = sender_agent.learn()
-            sender_entropy_dist.append(entropy_dist)
-            sender_actor_loss_dist.append(actor_loss_dist)
-            sender_critic_loss_dist.append(critic_loss_dist)
-            sender_total_loss_dist.append(total_loss_dist)
-        if isinstance(receiver_agent, PPOAgent):
-            entropy_dist, actor_loss_dist, critic_loss_dist, total_loss_dist = receiver_agent.learn()
-            receiver_entropy_dist.append(entropy_dist)
-            receiver_actor_loss_dist.append(actor_loss_dist)
-            receiver_critic_loss_dist.append(critic_loss_dist)
-            receiver_total_loss_dist.append(total_loss_dist)
+        should_learn = (episode + 1) % learn_interval == 0 or episode == n_episodes - 1
+        if should_learn:
+            if isinstance(sender_agent, PPOAgent):
+                entropy_dist, actor_loss_dist, critic_loss_dist, total_loss_dist = sender_agent.learn()
+                sender_entropy_dist.append(entropy_dist)
+                sender_actor_loss_dist.append(actor_loss_dist)
+                sender_critic_loss_dist.append(critic_loss_dist)
+                sender_total_loss_dist.append(total_loss_dist)
+            if isinstance(receiver_agent, PPOAgent):
+                entropy_dist, actor_loss_dist, critic_loss_dist, total_loss_dist = receiver_agent.learn()
+                receiver_entropy_dist.append(entropy_dist)
+                receiver_actor_loss_dist.append(actor_loss_dist)
+                receiver_critic_loss_dist.append(critic_loss_dist)
+                receiver_total_loss_dist.append(total_loss_dist)
         if episode % max(n_episodes // 20, 1) == 0:
             print(f"Episode {episode}, Performance: {final_performance:.4f}")
     
