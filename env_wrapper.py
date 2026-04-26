@@ -208,6 +208,11 @@ class BoardsWrapper:
     def get_useless_action_val(self) -> int:
         return int(self.env.useless_action_flag)
 
+    def get_clue_landmark_distance(self) -> float:
+        """Distance from clues to their nearest landmarks at the current moment.
+        Converging toward 0 during training means the sender is learning to communicate."""
+        return float(self.env.distance_func(self.env.board1_clues, self.env.board1_landmarks))
+
     def get_final_reward(self) -> float:
         if not self.done or self.final_reward is None:
             raise RuntimeError("The episode is not over yet.")

@@ -111,12 +111,11 @@ def test_receiver_view_shadow_logic(linked_shadows):
     assert env_test_helpers.pixel_equal(img[0, 0], (v, 0, 0))   # guess 0
     assert env_test_helpers.pixel_equal(img[0, 1], (0, v, 0))   # question 0
     if linked_shadows:
-        # Blue from board1_clues
-        assert env_test_helpers.pixel_equal(img[0, 2], (0, 0, 255))
+        # Shadow from clue 0 uses (0+1)*_OBJ_VALUE_STEP, not a flat 255
+        assert env_test_helpers.pixel_equal(img[0, 2], (0, 0, v))
         assert env_test_helpers.pixel_equal(img[3, 3], (0, 0, 0))
     else:
-        # Blue from board2_c_shadows
-        assert env_test_helpers.pixel_equal(img[3, 3], (0, 0, 255))
+        assert env_test_helpers.pixel_equal(img[3, 3], (0, 0, v))
         assert env_test_helpers.pixel_equal(img[0, 2], (0, 0, 0))
 
 

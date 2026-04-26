@@ -9,6 +9,7 @@ def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, recei
         raise ValueError("The environment should be set to an even number of moves.")
     
     performances_dist = []
+    clue_alignment_dist = []  # optimal_distance(clues, landmarks) at episode end: 0 means sender communicated perfectly
 
     # Additional stats - there might be bugs for frozen and RandomAgent, refactor needed
     # Training stats
@@ -102,6 +103,7 @@ def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, recei
                     receiver_agent.remember(receiver_state, receiver_action, receiver_action_probs, receiver_value, receiver_reward, False)
         
         performances_dist.append(final_performance)
+        clue_alignment_dist.append(env.get_clue_landmark_distance())
         final_rewards_dist.append(final_reward)
         receiver_instant_rewards_dist.append(receiver_instant)
         sender_instant_rewards_dist.append(sender_instant)
@@ -129,6 +131,7 @@ def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, recei
             print(f"Episode {episode}, Performance: {final_performance:.4f}")
     
     stats = {'performances_dist': performances_dist,
+             'clue_alignment_dist': clue_alignment_dist,
              'final_rewards_dist': final_rewards_dist,
              'receiver_instant_rewards_dist': receiver_instant_rewards_dist,
              'sender_instant_rewards_dist': sender_instant_rewards_dist,

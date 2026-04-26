@@ -203,8 +203,9 @@ class BoardsImplementation:
         for i, (x, y) in enumerate(self.board2_questions):
             board2_img[y, x, 1] = min(255, (i + 1) * self._OBJ_VALUE_STEP)
         if not self.disable_sender:
-            for x, y in (self.board1_clues if self.linked_shadows else self.board2_c_shadows):
-                board2_img[y, x, 2] = 255
+            clue_positions = self.board1_clues if self.linked_shadows else self.board2_c_shadows
+            for i, (x, y) in enumerate(clue_positions):
+                board2_img[y, x, 2] = min(255, (i + 1) * self._OBJ_VALUE_STEP)
         for x, y in self._receiver_visible_landmarks():
             board2_img[y, x, 2] = 255
         return board2_img
