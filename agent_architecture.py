@@ -257,7 +257,7 @@ class RandomAgent:
         self.permitted_actions = permitted_actions
     
     def choose_action(self, _): # Ignore observation.
-        return self.rng.choice(self.permitted_actions)
+        return int(self.rng.choice(self.permitted_actions)), 0.0, 0.0
 
 def save_agents(sender: PPOAgent | RandomAgent, receiver: PPOAgent | RandomAgent, file_path: str):
     checkpoint = {"sender": sender, "receiver": receiver}
