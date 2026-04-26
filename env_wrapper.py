@@ -19,6 +19,7 @@ class BoardsWrapper:
             device: str = "cpu",
             perf_epsilon: float = 1e-6,
             shaping_multiplier: float = 0.0,
+            gamma: float = 0.99,
     ) -> None:
         self.env = env
         if max_moves < 1:
@@ -46,6 +47,7 @@ class BoardsWrapper:
         self.instant_multiplier: float = instant_multiplier
         self.end_multiplier: float = end_multiplier
         self.shaping_multiplier: float = shaping_multiplier
+        self.gamma: float = gamma
         self.device: str = device
 
         self.num_moves: int = 0
@@ -191,7 +193,8 @@ class BoardsWrapper:
 
         if self.shaping_multiplier != 0.0:
             post_dist = self.env.distance_func(self.env.board1_landmarks, self.env.board2_guesses)
-            instant_reward += (pre_dist - post_dist) * self.shaping_multiplier
+            # Proper PBRS: F(s,s') = γΦ(s') - Φ(s) with Φ(s) = -distance
+            instant_reward += (pre_dist - self.gamma * post_dist) * self.shaping_multiplier
 
         if not self.done:
             self._maybe_early_exit_on_perfect_guess()

@@ -146,7 +146,7 @@ def create_artifact_dirs(output_root: Path, run_name: str) -> RunArtifacts:
     )
 
 
-def build_env(game_cfg: dict[str, Any], device: str) -> BoardsWrapper:
+def build_env(game_cfg: dict[str, Any], device: str, gamma: float = 0.99) -> BoardsWrapper:
     ensure_required(
         game_cfg,
         [
@@ -180,6 +180,7 @@ def build_env(game_cfg: dict[str, Any], device: str) -> BoardsWrapper:
         game_cfg["end_reward_multiplier"],
         device,
         shaping_multiplier=float(game_cfg.get("shaping_multiplier", 0.0)),
+        gamma=gamma,
     )
 
 
@@ -521,7 +522,7 @@ def run_stage(
     receiver_agent: Any,
     device: str,
 ) -> tuple[dict[str, list[Any]], Any, Any]:
-    env = build_env(stage_cfg["game"], device)
+    env = build_env(stage_cfg["game"], device, gamma=float(stage_cfg["training"].get("gamma", 0.99)))
     sender_agent, receiver_agent = maybe_rebuild_agents(
         env=env,
         game_cfg=stage_cfg["game"],

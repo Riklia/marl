@@ -196,6 +196,7 @@ class PPOAgent:
                 gae_lambda=self.params.gae_lambda,
                 last_value=last_value,
             )
+            advantage_np = (advantage_np - advantage_np.mean()) / (advantage_np.std() + 1e-8)
             advantage = torch.from_numpy(advantage_np).to(self.device)
             values = torch.tensor(vals_arr, dtype=torch.float32, device=self.device)
 
@@ -222,10 +223,16 @@ class PPOAgent:
                 actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
 
                 returns = advantage[batch] + values[batch]
-                critic_loss = (returns - critic_value).pow(2).mean()
+                critic_value_clipped = values[batch] + torch.clamp(
+                    critic_value - values[batch], -self.params.policy_clip, self.params.policy_clip
+                )
+                critic_loss = torch.max(
+                    (returns - critic_value).pow(2),
+                    (returns - critic_value_clipped).pow(2),
+                ).mean()
 
                 entropy = dist.entropy().mean()
-                total_loss = actor_loss + 0.5 * critic_loss - 0.005 * entropy
+                total_loss = actor_loss + 0.5 * critic_loss - 0.01 * entropy
 
                 self.optimizer.zero_grad(set_to_none=True)
                 total_loss.backward()

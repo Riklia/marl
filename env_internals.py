@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from misc_utils import greedy_distance
+from misc_utils import greedy_distance, optimal_distance
 
 from custom_types import Action, Move, ActionType
 
@@ -48,7 +48,7 @@ class BoardsImplementation:
         self.n_questions = n_questions # Number of question objects on board 2. Each of them casts a shadow onto board 1.
         self.linked_shadows = linked_shadows # Should shadows being cast by clue and question objects move with them? 
         # Passing in False results in shadows being frozen in their initial position.
-        self.distance_func = greedy_distance
+        self.distance_func = optimal_distance
 
         self.receiver_goal_visibility_mode = receiver_goal_visibility_mode
         self.receiver_goal_visibility_ratio = float(receiver_goal_visibility_ratio)
@@ -126,20 +126,20 @@ class BoardsImplementation:
 
         moving[object_number] = new_position
 
-    def _receiver_visible_landmarks(self) -> list[tuple[int, int]]:
+    def _sample_visible_landmark_indices(self) -> list[int]:
+        """Called once per episode in populate_boards to fix the visible subset."""
         if self.receiver_goal_visibility_mode == "none":
             return []
-
         if self.receiver_goal_visibility_mode == "full":
-            return list(self.board1_landmarks)
-
-        # partial visibility
+            return list(range(self.n_landmarks))
         n_visible = int(round(self.n_landmarks * self.receiver_goal_visibility_ratio))
         n_visible = max(0, min(self.n_landmarks, n_visible))
         if n_visible == 0:
             return []
+        return sorted(int(i) for i in self.rng.choice(self.n_landmarks, n_visible, replace=False))
 
-        return list(self.board1_landmarks[:n_visible])
+    def _receiver_visible_landmarks(self) -> list[tuple[int, int]]:
+        return [self.board1_landmarks[i] for i in self._visible_landmark_indices]
     
     def populate_boards(self): # Could also be used to reset the environment to a random state.
         # Create mixed up lists of coordinates for both boards to get non repeating positions for random placements of the objects.
@@ -171,6 +171,7 @@ class BoardsImplementation:
         
         self.start_distance = max(self.distance_func(self.board1_landmarks, self.board2_guesses), 0.5)
         self.useless_action_flag = False
+        self._visible_landmark_indices = self._sample_visible_landmark_indices()
         
     # Fixed intensity step per object index. Keeps channel count constant at 3
     # regardless of n_landmarks, so network weights transfer across curriculum stages.

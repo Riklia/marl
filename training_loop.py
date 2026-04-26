@@ -50,6 +50,7 @@ def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, recei
         sender_instant = 0.0
         receiver_instant = 0.0
         episode_length = 0.0
+        receiver_acted_this_episode = False
 
         while not done:
             sender_state = env.sender_observe()
@@ -68,11 +69,18 @@ def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, recei
                 if isinstance(sender_agent, PPOAgent):
                     sender_agent.remember(sender_state, sender_action, sender_action_probs, sender_value, final_reward,
                                           True)
+                # Episode ended on sender's half-turn: retroactively mark the receiver's
+                # last stored experience as terminal so GAE doesn't bootstrap across
+                # episode boundaries.
+                if isinstance(receiver_agent, PPOAgent) and receiver_acted_this_episode:
+                    receiver_agent.memory.rewards[-1] = final_reward
+                    receiver_agent.memory.dones[-1] = True
                 break
             
             receiver_state = env.receiver_observe()
             receiver_action, receiver_action_probs, receiver_value = receiver_agent.choose_action(receiver_state)
             receiver_reward, done = env.receiver_act(receiver_action)
+            receiver_acted_this_episode = True
 
             receiver_instant += receiver_reward
             useless_action_receiver += env.get_useless_action_val()

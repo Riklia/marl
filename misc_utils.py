@@ -4,6 +4,7 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import entropy
+from scipy.optimize import linear_sum_assignment
 from matplotlib.animation import FuncAnimation, PillowWriter
 
 
@@ -22,6 +23,11 @@ def greedy_distance(list1, list2, squared_distances: bool = False):
                 total_distance += math.sqrt(dist)
     
     return total_distance
+
+def optimal_distance(list1, list2):
+    cost = np.array([[math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) for b in list2] for a in list1])
+    row, col = linear_sum_assignment(cost)
+    return float(cost[row, col].sum())
 
 def prod_distance(list1, list2):
     total_distance = 0.0
