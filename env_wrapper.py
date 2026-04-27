@@ -19,7 +19,9 @@ class BoardsWrapper:
             device: str = "cpu",
             perf_epsilon: float = 1e-6,
             shaping_multiplier: float = 0.0,
+            sender_shaping_multiplier: float = 0.0,
             gamma: float = 0.99,
+            shaping_gamma: float | None = None,
     ) -> None:
         self.env = env
         if max_moves < 1:
@@ -47,7 +49,9 @@ class BoardsWrapper:
         self.instant_multiplier: float = instant_multiplier
         self.end_multiplier: float = end_multiplier
         self.shaping_multiplier: float = shaping_multiplier
+        self.sender_shaping_multiplier: float = sender_shaping_multiplier
         self.gamma: float = gamma
+        self.shaping_gamma: float = gamma if shaping_gamma is None else shaping_gamma
         self.device: str = device
 
         self.num_moves: int = 0
@@ -95,7 +99,7 @@ class BoardsWrapper:
         # current_board: H,W,3  -> [1,3,H,W]
         cur = torch.as_tensor(current_board, dtype=torch.float32, device=self.device)
         cur = cur.unsqueeze(0).permute(0, 3, 1, 2)
-        cur = (cur + 100) / 355
+        cur = cur / 255.0
 
         # previous_boards: list of H,W,3 -> [1, 3*len, H, W]
         prev_list = [
@@ -103,7 +107,7 @@ class BoardsWrapper:
             for b in previous_boards
         ]
         prev = torch.cat(prev_list, dim=1)
-        prev = (prev + 100) / 355
+        prev = prev / 255.0
 
         prog = torch.tensor([[progress]], dtype=torch.float32, device=self.device)
 
@@ -154,11 +158,55 @@ class BoardsWrapper:
         previous_boards = list(self.receiver_board_history)[-self.history_len :]
         progress = self.num_moves / self.max_moves
         return self._to_tensor(current_board, previous_boards, progress)
+
+    def sender_observe_raw(self) -> tuple[np.ndarray, list[np.ndarray], float]:
+        """Returns raw numpy arrays; use batch_observe_to_tensor for vectorized training."""
+        return (
+            self.env.sender_agent_view(),
+            list(self.sender_board_history)[-self.history_len :],
+            self.num_moves / self.max_moves,
+        )
+
+    def receiver_observe_raw(self) -> tuple[np.ndarray, list[np.ndarray], float]:
+        return (
+            self.env.receiver_agent_view(),
+            list(self.receiver_board_history)[-self.history_len :],
+            self.num_moves / self.max_moves,
+        )
+
+    @staticmethod
+    def batch_observe_to_tensor(
+        raw_list: list[tuple[np.ndarray, list[np.ndarray], float]],
+        device: str,
+    ) -> Observation:
+        """Batch-convert N raw observations to a single Observation tensor in one pass."""
+        N = len(raw_list)
+        cur0, prev0, _ = raw_list[0]
+        H, W, C = cur0.shape
+        h_len = len(prev0)
+
+        cur_np = np.empty((N, C, H, W), dtype=np.float32)
+        prev_np = np.empty((N, C * h_len, H, W), dtype=np.float32)
+        prog_np = np.empty((N, 1), dtype=np.float32)
+
+        for i, (cur, prevs, prog) in enumerate(raw_list):
+            cur_np[i] = cur.transpose(2, 0, 1)
+            for j, p in enumerate(prevs):
+                prev_np[i, j * C : (j + 1) * C] = p.transpose(2, 0, 1)
+            prog_np[i, 0] = prog
+
+        cur_t = torch.from_numpy(cur_np).to(device) / 255.0
+        prev_t = torch.from_numpy(prev_np).to(device) / 255.0
+        prog_t = torch.from_numpy(prog_np).to(device)
+        return Observation(current_board=cur_t, previous_boards=prev_t, progress=prog_t)
     
     def sender_act(self, action: int) -> tuple[float, bool]:
         if self.done:
             raise RuntimeError("The action limit was exhausted. Reset the environment.")
         self.num_moves += 1
+
+        if self.sender_shaping_multiplier != 0.0:
+            pre_clue_dist = self.env.distance_func(self.env.board1_clues, self.env.board1_landmarks)
 
         self.env.sender_agent_action(action)
 
@@ -166,6 +214,10 @@ class BoardsWrapper:
         self.sender_action_history.append(action)
 
         instant_reward = self._instant_reward(self.sender_action_history, self.sender_board_history, self._sender_color_filter)
+
+        if self.sender_shaping_multiplier != 0.0:
+            post_clue_dist = self.env.distance_func(self.env.board1_clues, self.env.board1_landmarks)
+            instant_reward += (pre_clue_dist - self.shaping_gamma * post_clue_dist) * self.sender_shaping_multiplier
 
         if not self.done:
             self._maybe_early_exit_on_perfect_guess()
@@ -194,7 +246,7 @@ class BoardsWrapper:
         if self.shaping_multiplier != 0.0:
             post_dist = self.env.distance_func(self.env.board1_landmarks, self.env.board2_guesses)
             # Proper PBRS: F(s,s') = γΦ(s') - Φ(s) with Φ(s) = -distance
-            instant_reward += (pre_dist - self.gamma * post_dist) * self.shaping_multiplier
+            instant_reward += (pre_dist - self.shaping_gamma * post_dist) * self.shaping_multiplier
 
         if not self.done:
             self._maybe_early_exit_on_perfect_guess()

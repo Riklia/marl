@@ -1,5 +1,6 @@
 import numpy as np
 import pickle
+from typing import cast
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -122,7 +123,7 @@ class ActorCritic(nn.Module):
         return dist, value
     
 class AgentParams:
-    def __init__(self, gamma = 0.99, alpha = 1e-4, gae_lambda = 0.95, policy_clip = 0.1, batch_size = 8, n_epochs = 4, seed = None):
+    def __init__(self, gamma = 0.99, alpha = 1e-4, gae_lambda = 0.95, policy_clip = 0.1, batch_size = 8, n_epochs = 4, seed = None, entropy_coeff = 0.01):
         self.gamma = gamma
         self.alpha = alpha
         self.gae_lambda = gae_lambda
@@ -130,6 +131,7 @@ class AgentParams:
         self.batch_size = batch_size
         self.n_epochs = n_epochs
         self.seed = seed
+        self.entropy_coeff = entropy_coeff
 
 class PPOAgent:
     def __init__(self, board_size, history_len, n_actions, hidden_size, device: str = "cpu", params: AgentParams | None = None, frozen: bool = False, n_channels_per_frame: int = 3):
@@ -146,7 +148,12 @@ class PPOAgent:
         self.frozen = frozen
         self.n_channels_per_frame = n_channels_per_frame
 
-        self.ac = ActorCritic(board_size, history_len, n_actions, hidden_size, n_channels_per_frame).to(device)
+        ac = ActorCritic(board_size, history_len, n_actions, hidden_size, n_channels_per_frame).to(device)
+        try:
+            ac = cast(ActorCritic, torch.compile(ac, mode="reduce-overhead", dynamic=True))
+        except Exception:
+            pass
+        self.ac = ac
         self.optimizer = optim.Adam(self.ac.parameters(), lr=self.params.alpha)
         self.memory = PPOMemory(self.params.batch_size, self.params.seed)
         
@@ -172,6 +179,13 @@ class PPOAgent:
             action = dist.sample()
             logp = dist.log_prob(action)
         return int(action.item()), float(logp.item()), float(value.item())
+
+    def batch_choose_action(self, observation: Observation) -> tuple[list[int], list[float], list[float]]:
+        with torch.no_grad():
+            dist, values = self.ac.dist_and_value(observation)
+            actions = dist.sample()
+            logps = dist.log_prob(actions)
+        return actions.tolist(), logps.tolist(), values.tolist()
 
     def learn(self):
         if self.frozen:
@@ -223,16 +237,10 @@ class PPOAgent:
                 actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
 
                 returns = advantage[batch] + values[batch]
-                critic_value_clipped = values[batch] + torch.clamp(
-                    critic_value - values[batch], -self.params.policy_clip, self.params.policy_clip
-                )
-                critic_loss = torch.max(
-                    (returns - critic_value).pow(2),
-                    (returns - critic_value_clipped).pow(2),
-                ).mean()
+                critic_loss = (returns - critic_value).pow(2).mean()
 
                 entropy = dist.entropy().mean()
-                total_loss = actor_loss + 0.5 * critic_loss - 0.01 * entropy
+                total_loss = actor_loss + 0.5 * critic_loss - self.params.entropy_coeff * entropy
 
                 self.optimizer.zero_grad(set_to_none=True)
                 total_loss.backward()
@@ -255,9 +263,12 @@ class RandomAgent:
             raise ValueError("The seed should be non negative.")
         self.rng = np.random.default_rng(seed)
         self.permitted_actions = permitted_actions
-    
-    def choose_action(self, _): # Ignore observation.
+
+    def choose_action(self, _):
         return int(self.rng.choice(self.permitted_actions)), 0.0, 0.0
+
+    def batch_choose_action(self, _: Observation) -> tuple[list[int], list[float], list[float]]:
+        raise NotImplementedError("RandomAgent does not support batch_choose_action")
 
 def save_agents(sender: PPOAgent | RandomAgent, receiver: PPOAgent | RandomAgent, file_path: str):
     checkpoint = {"sender": sender, "receiver": receiver}

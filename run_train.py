@@ -25,7 +25,7 @@ from agent_architecture import AgentParams, PPOAgent, RandomAgent, save_agents
 from env_internals import BoardsImplementation
 from env_wrapper import BoardsWrapper
 from misc_utils import smooth_list
-from training_loop import save_stats, train_agents
+from training_loop import save_stats, train_agents, train_agents_vec
 
 
 DEFAULT_OUTPUT_ROOT = Path("experiments")
@@ -172,6 +172,7 @@ def build_env(game_cfg: dict[str, Any], device: str, gamma: float = 0.99) -> Boa
         receiver_goal_visibility_ratio=game_cfg.get("receiver_goal_visibility_ratio", 0.0),
         disable_sender=game_cfg.get("disable_sender", False),
     )
+    shaping_gamma_raw = game_cfg.get("shaping_gamma")
     return BoardsWrapper(
         env_internals,
         game_cfg["max_moves"],
@@ -180,7 +181,9 @@ def build_env(game_cfg: dict[str, Any], device: str, gamma: float = 0.99) -> Boa
         game_cfg["end_reward_multiplier"],
         device,
         shaping_multiplier=float(game_cfg.get("shaping_multiplier", 0.0)),
+        sender_shaping_multiplier=float(game_cfg.get("sender_shaping_multiplier", 0.0)),
         gamma=gamma,
+        shaping_gamma=float(shaping_gamma_raw) if shaping_gamma_raw is not None else None,
     )
 
 
@@ -198,6 +201,7 @@ def build_agent_params(training_cfg: dict[str, Any], seed: int | None) -> AgentP
         training_cfg["batch_size"],
         training_cfg["n_epochs"],
         seed,
+        entropy_coeff=float(training_cfg.get("entropy_coeff", 0.01)),
     )
 
 
@@ -534,13 +538,21 @@ def run_stage(
         allow_stage_warm_start=stage_cfg.get("warm_start_from_previous_stage", False),
     )
 
+    n_vec_envs = int(stage_cfg["game"].get("n_vec_envs", 1))
     stage_stats: dict[str, list[Any]] = {}
     training_epochs = int(stage_cfg["training"].get("training_epochs", 1))
     n_episodes = int(stage_cfg["training"]["n_episodes"])
     for epoch in range(training_epochs):
         print(f"  Training epoch {epoch + 1}/{training_epochs}...")
         learn_interval = int(stage_cfg["training"].get("learn_interval", 32))
-        epoch_stats = train_agents(env, sender_agent, receiver_agent, n_episodes, learn_interval)
+        if n_vec_envs > 1:
+            envs = [env] + [
+                build_env(stage_cfg["game"], device, gamma=float(stage_cfg["training"].get("gamma", 0.99)))
+                for _ in range(n_vec_envs - 1)
+            ]
+            epoch_stats = train_agents_vec(envs, sender_agent, receiver_agent, n_episodes, learn_interval)
+        else:
+            epoch_stats = train_agents(env, sender_agent, receiver_agent, n_episodes, learn_interval)
         merge_stats(stage_stats, epoch_stats)
 
     return stage_stats, sender_agent, receiver_agent
