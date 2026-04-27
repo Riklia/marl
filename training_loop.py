@@ -69,16 +69,16 @@ def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, recei
                 final_performance = env.get_final_performance()
                 episode_length = env.num_moves
                 if isinstance(sender_agent, PPOAgent):
-                    sender_agent.remember(sender_state, sender_action, sender_action_probs, sender_value, final_reward,
+                    sender_agent.remember(sender_state, sender_action, sender_action_probs, sender_value, sender_reward + final_reward,
                                           True)
                 # Episode ended on sender's half-turn: retroactively mark the receiver's
                 # last stored experience as terminal so GAE doesn't bootstrap across
                 # episode boundaries.
                 if isinstance(receiver_agent, PPOAgent) and receiver_acted_this_episode:
-                    receiver_agent.memory.rewards[-1] = final_reward
+                    receiver_agent.memory.rewards[-1] += final_reward
                     receiver_agent.memory.dones[-1] = True
                 break
-            
+
             receiver_state = env.receiver_observe()
             receiver_action, receiver_action_probs, receiver_value = receiver_agent.choose_action(receiver_state)
             receiver_reward, done = env.receiver_act(receiver_action)
@@ -88,15 +88,15 @@ def train_agents(env: BoardsWrapper, sender_agent: PPOAgent | RandomAgent, recei
             useless_action_receiver += env.get_useless_action_val()
             if receiver_action == 0:
                 empty_action_receiver += 1
-            
+
             if done:
                 final_reward = env.get_final_reward()
                 final_performance = env.get_final_performance()
                 episode_length = env.num_moves
                 if isinstance(sender_agent, PPOAgent):
-                    sender_agent.remember(sender_state, sender_action, sender_action_probs, sender_value, final_reward, True)
+                    sender_agent.remember(sender_state, sender_action, sender_action_probs, sender_value, sender_reward + final_reward, True)
                 if isinstance(receiver_agent, PPOAgent):
-                    receiver_agent.remember(receiver_state, receiver_action, receiver_action_probs, receiver_value, final_reward, True)
+                    receiver_agent.remember(receiver_state, receiver_action, receiver_action_probs, receiver_value, receiver_reward + final_reward, True)
             else:
                 if isinstance(sender_agent, PPOAgent):
                     sender_agent.remember(sender_state, sender_action, sender_action_probs, sender_value, sender_reward, False)
@@ -231,9 +231,9 @@ def train_agents_vec(
                 if done:
                     final_r = batch_envs[i].get_final_reward()
                     if use_ppo_sender:
-                        sender_agent.remember(sender_obs_list[j], a, lp, v, final_r, True)
+                        sender_agent.remember(sender_obs_list[j], a, lp, v, reward + final_r, True)
                     if use_ppo_receiver and receiver_acted[i]:
-                        receiver_agent.memory.rewards[-1] = final_r
+                        receiver_agent.memory.rewards[-1] += final_r
                         receiver_agent.memory.dones[-1] = True
                     performances_dist.append(batch_envs[i].get_final_performance())
                     clue_alignment_dist.append(batch_envs[i].get_clue_landmark_distance())
@@ -287,9 +287,9 @@ def train_agents_vec(
                 if done:
                     final_r = batch_envs[i].get_final_reward()
                     if use_ppo_sender:
-                        sender_agent.remember(s_obs, sa, slp, sv, final_r, True)
+                        sender_agent.remember(s_obs, sa, slp, sv, s_reward + final_r, True)
                     if use_ppo_receiver:
-                        receiver_agent.remember(receiver_obs_list[j], ra, rlp, rv, final_r, True)
+                        receiver_agent.remember(receiver_obs_list[j], ra, rlp, rv, reward + final_r, True)
                     performances_dist.append(batch_envs[i].get_final_performance())
                     clue_alignment_dist.append(batch_envs[i].get_clue_landmark_distance())
                     final_rewards_dist.append(final_r)
