@@ -171,6 +171,7 @@ def build_env(game_cfg: dict[str, Any], device: str, gamma: float = 0.99) -> Boa
         receiver_goal_visibility_mode=game_cfg.get("receiver_goal_visibility_mode", "none"),
         receiver_goal_visibility_ratio=game_cfg.get("receiver_goal_visibility_ratio", 0.0),
         disable_sender=game_cfg.get("disable_sender", False),
+        disable_receiver=game_cfg.get("disable_receiver", False),
     )
     shaping_gamma_raw = game_cfg.get("shaping_gamma")
     return BoardsWrapper(

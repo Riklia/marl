@@ -17,6 +17,7 @@ class BoardsImplementation:
             receiver_goal_visibility_mode="none",
             receiver_goal_visibility_ratio=0.0,
             disable_sender=False,
+            disable_receiver=False,
         ):
         if size < 1:
             raise ValueError("The board size should be positive.")
@@ -53,6 +54,7 @@ class BoardsImplementation:
         self.receiver_goal_visibility_mode = receiver_goal_visibility_mode
         self.receiver_goal_visibility_ratio = float(receiver_goal_visibility_ratio)
         self.disable_sender = bool(disable_sender)
+        self.disable_receiver = bool(disable_receiver)
 
         # None is "do nothing" action
         self.sender_agent_actions = [None]
@@ -192,8 +194,9 @@ class BoardsImplementation:
             board1_img[y, x, 0] = min(255, (i + 1) * self._OBJ_VALUE_STEP)
         for i, (x, y) in enumerate(self.board1_clues):
             board1_img[y, x, 1] = min(255, (i + 1) * self._OBJ_VALUE_STEP)
-        for x, y in (self.board2_questions if self.linked_shadows else self.board1_q_shadows):
-            board1_img[y, x, 2] = 255
+        if not self.disable_receiver:
+            for x, y in (self.board2_questions if self.linked_shadows else self.board1_q_shadows):
+                board1_img[y, x, 2] = 255
         return board1_img
 
     def receiver_agent_view(self): # Receiver agent can only see board 2.
@@ -239,6 +242,9 @@ class BoardsImplementation:
             raise ValueError(f"Receiver agent does not have an action with index {action_index}.")
         action = self.receiver_agent_actions[action_index]
         self.useless_action_flag = False
+        if self.disable_receiver:
+            self.useless_action_flag = True
+            return
         if action is None:
             self.useless_action_flag = True
             return
