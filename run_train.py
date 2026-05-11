@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from agent_architecture import AgentParams, PPOAgent, RandomAgent, save_agents
+from agent_architecture import AgentParams, GreedySenderAgent, PPOAgent, RandomAgent, save_agents
 from env_internals import BoardsImplementation
 from env_wrapper import BoardsWrapper
 from misc_utils import smooth_list
@@ -185,6 +185,8 @@ def build_env(game_cfg: dict[str, Any], device: str, gamma: float = 0.99) -> Boa
         sender_shaping_multiplier=float(game_cfg.get("sender_shaping_multiplier", 0.0)),
         gamma=gamma,
         shaping_gamma=float(shaping_gamma_raw) if shaping_gamma_raw is not None else None,
+        fix_receiver_shaping_assignment=bool(game_cfg.get("fix_receiver_shaping_assignment", False)),
+        align_receiver_assignment_with_clues=bool(game_cfg.get("align_receiver_assignment_with_clues", False)),
     )
 
 
@@ -225,6 +227,11 @@ def build_agent(
     if kind == "random":
         permitted_actions = list(range(env.sender_n_actions))
         return RandomAgent(permitted_actions)
+
+    if kind == "greedy":
+        if role != "sender":
+            raise ValueError("GreedySenderAgent can only be used as sender")
+        return GreedySenderAgent(env)
 
     if kind != "ppo":
         raise ValueError(f"Unsupported agent kind for '{role}': {kind}")
