@@ -69,38 +69,90 @@ class PPOMemory:
         self.dones = []
         self.vals = []
 
-class SharedEncoder(nn.Module):
-    def __init__(self, board_size: int, history_len: int, n_channels_per_frame: int):
-        super().__init__()
-        self.channels = n_channels_per_frame * (history_len + 1)
-        channels = self.channels
-        self.conv = nn.Sequential(
-            nn.Conv2d(channels, channels * 2, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(channels * 2, channels * 2, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(channels * 2, channels, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Flatten(),
-        )
-        self.out_dim = channels * board_size * board_size  # flattened conv output
+class BoardGINEncoder(nn.Module):
+    """GIN encoder over the board grid.
 
-    def forward(self, observation):
-        x = torch.cat([observation.previous_boards, observation.current_board], dim=1)
-        return self.conv(x)
+    Each cell is a node with features [channel_values..., x_norm, y_norm].
+    Edges are 4-connected grid adjacency. Readout: project sum-pooled node
+    embeddings at each layer (including input) and concatenate — the GIN
+    readout from Xu et al. 2019, adapted from Abdelaziz et al. 2023.
+    """
+
+    def __init__(self, board_size: int, n_total_channels: int, hidden_dim: int, n_layers: int = 5):
+        super().__init__()
+        node_in_dim = n_total_channels + 2  # channel values + (x_norm, y_norm)
+        self._board_size = board_size
+        self._n_nodes = board_size * board_size
+        self.out_dim = hidden_dim * (n_layers + 1)
+
+        # GIN message-passing MLPs: h_new = MLP(h_self + sum_neighbors(h))
+        self.gin_mlps = nn.ModuleList()
+        for i in range(n_layers):
+            in_d = node_in_dim if i == 0 else hidden_dim
+            self.gin_mlps.append(nn.Sequential(
+                nn.Linear(in_d, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+            ))
+
+        # Readout: project each layer's sum-pooled output to hidden_dim then concat
+        self.readout_projs = nn.ModuleList(
+            [nn.Linear(node_in_dim if i == 0 else hidden_dim, hidden_dim)
+             for i in range(n_layers + 1)]
+        )
+
+        # 4-connected grid edge index — fixed for lifetime of this module
+        edges = []
+        for y in range(board_size):
+            for x in range(board_size):
+                idx = y * board_size + x
+                if x + 1 < board_size:
+                    edges += [(idx, idx + 1), (idx + 1, idx)]
+                if y + 1 < board_size:
+                    edges += [(idx, idx + board_size), (idx + board_size, idx)]
+        self.register_buffer('edge_index', torch.tensor(edges, dtype=torch.long).T.contiguous())
+
+    def _node_features(self, boards: torch.Tensor) -> torch.Tensor:
+        B, C, H, W = boards.shape
+        channel_vals = boards.permute(0, 2, 3, 1).reshape(B, H * W, C)
+        xs = torch.arange(W, dtype=boards.dtype, device=boards.device) / max(W - 1, 1)
+        ys = torch.arange(H, dtype=boards.dtype, device=boards.device) / max(H - 1, 1)
+        gy, gx = torch.meshgrid(ys, xs, indexing='ij')
+        pos = torch.stack([gx, gy], dim=-1).reshape(H * W, 2).unsqueeze(0).expand(B, -1, -1)
+        return torch.cat([channel_vals, pos], dim=-1)  # [B, N, C+2]
+
+    def forward(self, boards: torch.Tensor) -> torch.Tensor:
+        B = boards.shape[0]
+        N = self._n_nodes
+        edge_index = cast(torch.Tensor, self.edge_index)
+        src, dst = edge_index[0], edge_index[1]
+        E = src.shape[0]
+
+        h = self._node_features(boards)  # [B, N, node_in_dim]
+        layer_pools = [self.readout_projs[0](h.sum(dim=1))]
+
+        for k, mlp in enumerate(self.gin_mlps):
+            d = h.shape[-1]
+            agg = torch.zeros(B, N, d, device=h.device, dtype=h.dtype)
+            agg.scatter_add_(1, dst.view(1, -1, 1).expand(B, E, d), h[:, src, :])
+            h = mlp(h + agg)
+            layer_pools.append(self.readout_projs[k + 1](h.sum(dim=1)))
+
+        return torch.cat(layer_pools, dim=-1)  # [B, out_dim]
+
 
 class ActorCritic(nn.Module):
     def __init__(self, board_size: int, history_len: int, n_actions: int, hidden_size: int, n_channels_per_frame: int):
         super().__init__()
-        self.encoder = SharedEncoder(board_size, history_len, n_channels_per_frame)
+        n_total_channels = n_channels_per_frame * (history_len + 1)
+        self.encoder = BoardGINEncoder(board_size, n_total_channels, hidden_dim=hidden_size)
 
         fc_in = self.encoder.out_dim + 1  # + progress scalar
 
-        def mlp(out_dim: int):
+        def mlp(out_dim: int) -> nn.Sequential:
             return nn.Sequential(
                 nn.Linear(fc_in, hidden_size),
-                nn.ReLU(),
-                nn.Linear(hidden_size, hidden_size),
                 nn.ReLU(),
                 nn.Linear(hidden_size, hidden_size),
                 nn.ReLU(),
@@ -110,19 +162,17 @@ class ActorCritic(nn.Module):
         self.actor_head = mlp(n_actions)
         self.critic_head = mlp(1)
 
-    def forward(self, observation):
-        z = self.encoder(observation)
+    def forward(self, observation: Observation) -> tuple[torch.Tensor, torch.Tensor]:
+        boards = torch.cat([observation.previous_boards, observation.current_board], dim=1)
+        z = self.encoder(boards)
         combined = torch.cat([z, observation.progress], dim=1)
         logits = self.actor_head(combined)
-
-        value = self.critic_head(torch.cat([z, observation.progress], dim=1)).squeeze(-1)
-
+        value = self.critic_head(combined).squeeze(-1)
         return logits, value
 
-    def dist_and_value(self, observation):
+    def dist_and_value(self, observation: Observation) -> tuple[Categorical, torch.Tensor]:
         logits, value = self.forward(observation)
-        dist = Categorical(logits=logits)
-        return dist, value
+        return Categorical(logits=logits), value
     
 class AgentParams:
     def __init__(self, gamma = 0.99, alpha = 1e-4, gae_lambda = 0.95, policy_clip = 0.1, batch_size = 8, n_epochs = 4, seed = None, entropy_coeff = 0.01):
