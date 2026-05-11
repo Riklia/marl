@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import pickle
 from typing import cast
@@ -5,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
+from scipy.optimize import linear_sum_assignment
 
 import misc_utils
 from custom_types import Observation
@@ -255,6 +257,49 @@ class PPOAgent:
         self.memory.clear_memory()
         return entropy_dist, actor_loss_dist, critic_loss_dist, total_loss_dist
         
+class GreedySenderAgent:
+    """Scripted sender that greedily moves the farthest clue one step toward its landmark.
+
+    Locks the clue→landmark assignment once per episode (when env.num_moves == 0) so
+    gradients received by a co-trained receiver remain consistent within the episode.
+    Requires the env to expose .num_moves, .env.board1_clues, and .env.board1_landmarks.
+    """
+
+    def __init__(self, env) -> None:
+        self._impl = env.env
+        self._wrapper = env
+        self._locked_assignment: list[tuple[int, int]] | None = None
+
+    def choose_action(self, _obs=None) -> tuple[int, float, float]:
+        if self._wrapper.num_moves == 0:
+            clues = self._impl.board1_clues
+            landmarks = self._impl.board1_landmarks
+            cost = np.array(
+                [[math.sqrt((c[0] - l[0]) ** 2 + (c[1] - l[1]) ** 2) for l in landmarks] for c in clues],
+                dtype=float,
+            )
+            row_ind, col_ind = linear_sum_assignment(cost)
+            self._locked_assignment = list(zip(row_ind.tolist(), col_ind.tolist()))
+
+        best_action, best_dist = 0, 0.0
+        for ci, li in self._locked_assignment:  # type: ignore[union-attr]
+            cx, cy = self._impl.board1_clues[ci]
+            lx, ly = self._impl.board1_landmarks[li]
+            dist = math.sqrt((lx - cx) ** 2 + (ly - cy) ** 2)
+            if dist <= best_dist:
+                continue
+            best_dist = dist
+            dx, dy = lx - cx, ly - cy
+            if abs(dx) >= abs(dy) and dx != 0:
+                direction = 3 if dx > 0 else 2
+            elif dy != 0:
+                direction = 1 if dy > 0 else 0
+            else:
+                continue
+            best_action = 1 + 4 * ci + direction
+        return best_action, 0.0, 0.0
+
+
 class RandomAgent:
     def __init__(self, permitted_actions: list[int], seed: int | None = None):
         if seed is None:

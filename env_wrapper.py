@@ -1,7 +1,8 @@
+import math
 import torch
 import numpy as np
 from collections import deque
-
+from scipy.optimize import linear_sum_assignment
 
 from env_internals import BoardsImplementation
 from misc_utils import create_animation
@@ -22,6 +23,8 @@ class BoardsWrapper:
             sender_shaping_multiplier: float = 0.0,
             gamma: float = 0.99,
             shaping_gamma: float | None = None,
+            fix_receiver_shaping_assignment: bool = False,
+            align_receiver_assignment_with_clues: bool = False,
     ) -> None:
         self.env = env
         if max_moves < 1:
@@ -53,6 +56,9 @@ class BoardsWrapper:
         self.gamma: float = gamma
         self.shaping_gamma: float = gamma if shaping_gamma is None else shaping_gamma
         self.device: str = device
+        self.fix_receiver_shaping_assignment: bool = fix_receiver_shaping_assignment
+        self.align_receiver_assignment_with_clues: bool = align_receiver_assignment_with_clues
+        self._receiver_shaping_assignment: list[tuple[int, int]] | None = None
 
         self.num_moves: int = 0
         self.done: bool = False
@@ -69,12 +75,43 @@ class BoardsWrapper:
 
         self.reset()
 
+    @staticmethod
+    def _compute_locked_assignment(points_a: list, points_b: list) -> list[tuple[int, int]]:
+        cost = np.array([
+            [math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) for b in points_b]
+            for a in points_a
+        ])
+        row_ind, col_ind = linear_sum_assignment(cost)
+        return list(zip(row_ind.tolist(), col_ind.tolist()))
+
+    @staticmethod
+    def _locked_dist(points_a: list, points_b: list, assignment: list[tuple[int, int]]) -> float:
+        return sum(
+            math.sqrt((points_a[r][0] - points_b[c][0]) ** 2 + (points_a[r][1] - points_b[c][1]) ** 2)
+            for r, c in assignment
+        )
+
     # noinspection PyAttributeOutsideInit
     def reset(self) -> None:
         self.env.populate_boards()
         self.num_moves = 0
         self.done = False
         self.animation_frames = [self.env.draw_boards()]
+        if self.fix_receiver_shaping_assignment and self.shaping_multiplier != 0.0:
+            if self.align_receiver_assignment_with_clues:
+                # Align receiver's locked assignment with the sender's clue→landmark assignment.
+                # clue-i → landmark-j  ⟹  guess-i should track landmark-j (shadow-i → guess-i).
+                # _compute_locked_assignment returns [(ci, li), ...]; receiver needs [(li, ci), ...].
+                clue_lm = self._compute_locked_assignment(
+                    self.env.board1_clues, self.env.board1_landmarks
+                )
+                self._receiver_shaping_assignment = [(li, ci) for ci, li in clue_lm]
+            else:
+                self._receiver_shaping_assignment = self._compute_locked_assignment(
+                    self.env.board1_landmarks, self.env.board2_guesses
+                )
+        else:
+            self._receiver_shaping_assignment = None
         self.final_reward = None
         self.final_performance = None
 
@@ -234,7 +271,10 @@ class BoardsWrapper:
         self.num_moves += 1
 
         if self.shaping_multiplier != 0.0:
-            pre_dist = self.env.distance_func(self.env.board1_landmarks, self.env.board2_guesses)
+            if self._receiver_shaping_assignment is not None:
+                pre_dist = self._locked_dist(self.env.board1_landmarks, self.env.board2_guesses, self._receiver_shaping_assignment)
+            else:
+                pre_dist = self.env.distance_func(self.env.board1_landmarks, self.env.board2_guesses)
 
         self.env.receiver_agent_action(action)
 
@@ -244,8 +284,10 @@ class BoardsWrapper:
         instant_reward = self._instant_reward(self.receiver_action_history, self.receiver_board_history, self._receiver_color_filter)
 
         if self.shaping_multiplier != 0.0:
-            post_dist = self.env.distance_func(self.env.board1_landmarks, self.env.board2_guesses)
-            # Proper PBRS: F(s,s') = γΦ(s') - Φ(s) with Φ(s) = -distance
+            if self._receiver_shaping_assignment is not None:
+                post_dist = self._locked_dist(self.env.board1_landmarks, self.env.board2_guesses, self._receiver_shaping_assignment)
+            else:
+                post_dist = self.env.distance_func(self.env.board1_landmarks, self.env.board2_guesses)
             instant_reward += (pre_dist - self.shaping_gamma * post_dist) * self.shaping_multiplier
 
         if not self.done:
