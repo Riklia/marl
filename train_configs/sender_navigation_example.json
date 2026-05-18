@@ -1,0 +1,30 @@
+{
+  "comment": "Sender navigation pre-training: sender learns to move clues toward landmarks while a copycat receiver chases the clue shadows. Final reward and performance are meaningful metrics for sender quality — if the sender places clues on landmarks, the copycat receiver scores perfectly.",
+  "output_dir": "experiments/sender_navigation",
+  "game": {
+    "size": 4,
+    "n_landmarks": 2,
+    "n_clues": 2,
+    "n_questions": 0,
+    "max_moves": 20,
+    "history_len": 2,
+    "instant_reward_multiplier": 0.0,
+    "end_reward_multiplier": 1.0,
+    "sender_shaping_multiplier": 1.0
+  },
+  "training": {
+    "training_epochs": 1,
+    "n_episodes": 2000,
+    "batch_size": 64,
+    "alpha": 0.0003,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "policy_clip": 0.2,
+    "n_epochs": 4,
+    "learn_interval": 64
+  },
+  "agents": {
+    "sender": { "kind": "ppo" },
+    "receiver": { "kind": "copycat" }
+  }
+}

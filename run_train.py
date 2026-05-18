@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from agent_architecture import AgentParams, PPOAgent, RandomAgent, save_agents
+from agent_architecture import AgentParams, CopycatReceiverAgent, PPOAgent, RandomAgent, save_agents
 from env_internals import BoardsImplementation
 from env_wrapper import BoardsWrapper
 from misc_utils import smooth_list
@@ -180,6 +180,8 @@ def build_env(game_cfg: dict[str, Any], device: str) -> BoardsWrapper:
         game_cfg["end_reward_multiplier"],
         device,
         shaping_multiplier=float(game_cfg.get("shaping_multiplier", 0.0)),
+        sender_shaping_multiplier=float(game_cfg.get("sender_shaping_multiplier", 0.0)),
+        sender_navigation_mode=bool(game_cfg.get("sender_navigation_mode", False)),
     )
 
 
@@ -220,6 +222,11 @@ def build_agent(
         permitted_actions = list(range(env.sender_n_actions))
         return RandomAgent(permitted_actions)
 
+    if kind == "copycat":
+        if role != "receiver":
+            raise ValueError("CopycatReceiverAgent can only be used as receiver")
+        return CopycatReceiverAgent(env)
+
     if kind != "ppo":
         raise ValueError(f"Unsupported agent kind for '{role}': {kind}")
 
@@ -242,6 +249,8 @@ def build_agent(
 def is_reusable_agent(existing_agent: Any, role: str, env: BoardsWrapper) -> bool:
     if existing_agent is None:
         return False
+    if isinstance(existing_agent, CopycatReceiverAgent):
+        return False  # holds an env reference; must be rebuilt per stage
     if isinstance(existing_agent, RandomAgent):
         return True
 

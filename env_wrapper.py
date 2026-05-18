@@ -19,6 +19,8 @@ class BoardsWrapper:
             device: str = "cpu",
             perf_epsilon: float = 1e-6,
             shaping_multiplier: float = 0.0,
+            sender_shaping_multiplier: float = 0.0,
+            sender_navigation_mode: bool = False,
     ) -> None:
         self.env = env
         if max_moves < 1:
@@ -46,7 +48,9 @@ class BoardsWrapper:
         self.instant_multiplier: float = instant_multiplier
         self.end_multiplier: float = end_multiplier
         self.shaping_multiplier: float = shaping_multiplier
+        self.sender_shaping_multiplier: float = sender_shaping_multiplier
         self.device: str = device
+        self.sender_navigation_mode: bool = sender_navigation_mode
 
         self.num_moves: int = 0
         self.done: bool = False
@@ -117,7 +121,7 @@ class BoardsWrapper:
         self.done = True
         if final_reward is None or final_perf is None:
             final_reward, final_perf = self.env.reward_function()
-        self.final_reward = float(final_reward) * self.end_multiplier
+        self.final_reward = 0.0 if self.sender_navigation_mode else float(final_reward) * self.end_multiplier
         self.final_performance = float(final_perf)
 
     def _maybe_early_exit_on_perfect_guess(self) -> None:
@@ -158,12 +162,20 @@ class BoardsWrapper:
             raise RuntimeError("The action limit was exhausted. Reset the environment.")
         self.num_moves += 1
 
+        pre_dist = 0.0
+        if self.sender_shaping_multiplier != 0.0:
+            pre_dist = self.env.distance_func(self.env.board1_clues, self.env.board1_landmarks)
+
         self.env.sender_agent_action(action)
 
         self.sender_board_history.append(self.env.sender_agent_view())
         self.sender_action_history.append(action)
 
         instant_reward = self._instant_reward(self.sender_action_history, self.sender_board_history, self._sender_color_filter)
+
+        if self.sender_shaping_multiplier != 0.0:
+            post_dist = self.env.distance_func(self.env.board1_clues, self.env.board1_landmarks)
+            instant_reward += (pre_dist - post_dist) * self.sender_shaping_multiplier
 
         if not self.done:
             self._maybe_early_exit_on_perfect_guess()

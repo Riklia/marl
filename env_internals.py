@@ -172,11 +172,6 @@ class BoardsImplementation:
         self.start_distance = max(self.distance_func(self.board1_landmarks, self.board2_guesses), 0.5)
         self.useless_action_flag = False
         
-    # Fixed intensity step per object index. Keeps channel count constant at 3
-    # regardless of n_landmarks, so network weights transfer across curriculum stages.
-    # Supports up to 7 distinct objects per channel (32, 64, …, 224) before clamping.
-    _OBJ_VALUE_STEP: int = 32
-
     @property
     def n_sender_channels(self) -> int:
         return 3
@@ -187,20 +182,20 @@ class BoardsImplementation:
 
     def sender_agent_view(self): # Sender agent can only see board 1.
         board1_img = np.zeros((self.size, self.size, 3), dtype=np.uint8)
-        for i, (x, y) in enumerate(self.board1_landmarks):
-            board1_img[y, x, 0] = min(255, (i + 1) * self._OBJ_VALUE_STEP)
-        for i, (x, y) in enumerate(self.board1_clues):
-            board1_img[y, x, 1] = min(255, (i + 1) * self._OBJ_VALUE_STEP)
+        for x, y in self.board1_landmarks:
+            board1_img[y, x, 0] = 255
+        for x, y in self.board1_clues:
+            board1_img[y, x, 1] = 255
         for x, y in (self.board2_questions if self.linked_shadows else self.board1_q_shadows):
             board1_img[y, x, 2] = 255
         return board1_img
 
     def receiver_agent_view(self): # Receiver agent can only see board 2.
         board2_img = np.zeros((self.size, self.size, 3), dtype=np.uint8)
-        for i, (x, y) in enumerate(self.board2_guesses):
-            board2_img[y, x, 0] = min(255, (i + 1) * self._OBJ_VALUE_STEP)
-        for i, (x, y) in enumerate(self.board2_questions):
-            board2_img[y, x, 1] = min(255, (i + 1) * self._OBJ_VALUE_STEP)
+        for x, y in self.board2_guesses:
+            board2_img[y, x, 0] = 255
+        for x, y in self.board2_questions:
+            board2_img[y, x, 1] = 255
         if not self.disable_sender:
             for x, y in (self.board1_clues if self.linked_shadows else self.board2_c_shadows):
                 board2_img[y, x, 2] = 255

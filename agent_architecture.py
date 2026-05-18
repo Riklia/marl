@@ -1,8 +1,11 @@
+import math
+
 import numpy as np
 import pickle
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from scipy.optimize import linear_sum_assignment
 from torch.distributions import Categorical
 
 import misc_utils
@@ -249,8 +252,47 @@ class RandomAgent:
         self.rng = np.random.default_rng(seed)
         self.permitted_actions = permitted_actions
     
-    def choose_action(self, _): # Ignore observation.
-        return self.rng.choice(self.permitted_actions)
+    def choose_action(self, _) -> tuple[int, float, float]:
+        return int(self.rng.choice(self.permitted_actions)), 0.0, 0.0
+
+class CopycatReceiverAgent:
+    """Receiver that mirrors clue shadow positions onto guesses every turn.
+
+    Rather than moving step-by-step, it directly writes board2_guesses to the
+    current clue positions each turn, then returns action 0 so receiver_act
+    does nothing further. This gives an instantaneous, perfect copy of where
+    the sender placed its clues, making the final reward a clean proxy for
+    sender navigation quality with no step-count or blocking artifacts.
+
+    Assignment (which guess tracks which clue) is locked via Hungarian matching
+    at the start of each episode and held fixed for the full episode.
+    """
+
+    def __init__(self, env) -> None:
+        self.env = env
+        self._assignment: list[tuple[int, int]] = []
+
+    def _lock_assignment(self) -> None:
+        guesses = self.env.env.board2_guesses
+        shadows = self.env.env.board1_clues
+        cost = np.array([
+            [math.sqrt((guesses[g][0] - shadows[s][0]) ** 2 + (guesses[g][1] - shadows[s][1]) ** 2)
+             for s in range(len(shadows))]
+            for g in range(len(guesses))
+        ])
+        row_ind, col_ind = linear_sum_assignment(cost)
+        self._assignment = list(zip(row_ind.tolist(), col_ind.tolist()))
+
+    def choose_action(self, _) -> tuple[int, float, float]:
+        if self.env.num_moves == 1:
+            self._lock_assignment()
+
+        shadows = self.env.env.board1_clues
+        for guess_idx, shadow_idx in self._assignment:
+            self.env.env.board2_guesses[guess_idx] = shadows[shadow_idx]
+
+        return 0, 0.0, 0.0
+
 
 def save_agents(sender: PPOAgent | RandomAgent, receiver: PPOAgent | RandomAgent, file_path: str):
     checkpoint = {"sender": sender, "receiver": receiver}
