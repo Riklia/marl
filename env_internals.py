@@ -224,7 +224,6 @@ class BoardsImplementation:
             self.board1_clues,
             action.object_number,
             action.move,
-            blocked_by=self.board1_landmarks,
         )
 
     def receiver_agent_action(self, action_index: int) -> None:
