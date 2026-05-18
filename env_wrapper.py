@@ -97,7 +97,7 @@ class BoardsWrapper:
         # current_board: H,W,3  -> [1,3,H,W]
         cur = torch.as_tensor(current_board, dtype=torch.float32, device=self.device)
         cur = cur.unsqueeze(0).permute(0, 3, 1, 2)
-        cur = (cur + 100) / 355
+        cur = cur / 255.0
 
         # previous_boards: list of H,W,3 -> [1, 3*len, H, W]
         prev_list = [
@@ -105,7 +105,7 @@ class BoardsWrapper:
             for b in previous_boards
         ]
         prev = torch.cat(prev_list, dim=1)
-        prev = (prev + 100) / 355
+        prev = prev / 255.0
 
         prog = torch.tensor([[progress]], dtype=torch.float32, device=self.device)
 
