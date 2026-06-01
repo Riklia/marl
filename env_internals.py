@@ -186,7 +186,7 @@ class BoardsImplementation:
             board1_img[y, x, 0] = 255
         for x, y in self.board1_clues:
             board1_img[y, x, 1] = 255
-        for x, y in (self.board2_questions if self.linked_shadows else self.board1_q_shadows):
+        for x, y in self.board2_guesses:
             board1_img[y, x, 2] = 255
         return board1_img
 
