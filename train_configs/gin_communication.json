@@ -1,0 +1,69 @@
+{
+  "comment": "Two-stage curriculum using the GIN quadtree-abstraction encoder (arXiv:2306.11336). Stage 1: sender pre-training with copycat receiver. Stage 2: joint training. Toggle 'encoder' to 'cnn' to fall back to the default conv encoder.",
+  "output_dir": "experiments/gin_communication",
+  "base": {
+    "game": {
+      "size": 4,
+      "n_landmarks": 2,
+      "n_clues": 2,
+      "n_questions": 0,
+      "max_moves": 20,
+      "history_len": 2,
+      "instant_reward_multiplier": 0.0,
+      "end_reward_multiplier": 1.0,
+      "sender_shaping_multiplier": 1.0
+    },
+    "training": {
+      "training_epochs": 1,
+      "batch_size": 64,
+      "alpha": 0.0003,
+      "gamma": 0.99,
+      "gae_lambda": 0.95,
+      "policy_clip": 0.2,
+      "n_epochs": 4,
+      "learn_interval": 64
+    },
+    "agents": {
+      "sender": {
+        "kind": "ppo",
+        "encoder": "gin",
+        "gin_hidden": 64,
+        "gin_layers": 3
+      },
+      "receiver": {
+        "kind": "ppo",
+        "encoder": "gin",
+        "gin_hidden": 64,
+        "gin_layers": 3
+      }
+    }
+  },
+  "curriculum": [
+    {
+      "name": "sender_navigation",
+      "comment": "Sender learns to navigate clues onto landmarks. Copycat receiver gives a clean performance signal.",
+      "training": {
+        "n_episodes": 5000
+      },
+      "agents": {
+        "receiver": { "kind": "copycat" }
+      },
+      "warm_start_from_previous_stage": false
+    },
+    {
+      "name": "joint_communication",
+      "comment": "Receiver is introduced. Sender warm-starts from stage 1.",
+      "training": {
+        "n_episodes": 15000
+      },
+      "game": {
+        "shaping_multiplier": 2.0
+      },
+      "agents": {
+        "sender": { "kind": "ppo" },
+        "receiver": { "kind": "ppo" }
+      },
+      "warm_start_from_previous_stage": true
+    }
+  ]
+}

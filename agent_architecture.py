@@ -4,12 +4,198 @@ import numpy as np
 import pickle
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from scipy.optimize import linear_sum_assignment
 from torch.distributions import Categorical
 
 import misc_utils
 from custom_types import Observation
+
+
+def _compute_max_nodes(board_size: int) -> int:
+    """Returns total nodes in a full quadtree for a `board_size` * `board_size` grid."""
+    max_depth = int(math.log2(board_size))
+    return (4 ** (max_depth + 1) - 1) // 3
+
+
+def _compute_bfs_regions(board_size: int) -> list[tuple[int, int, int, int]]:
+    """Returns (y1, y2, x1, x2) for each node in BFS order."""
+    regions = [(0, board_size, 0, board_size)]
+    frontier = regions[:]
+    while frontier[0][1] - frontier[0][0] > 1:
+        next_frontier: list[tuple[int, int, int, int]] = []
+        for (y1, y2, x1, x2) in frontier:
+            mh, mw = (y1 + y2) // 2, (x1 + x2) // 2
+            children = [(y1, mh, x1, mw), (y1, mh, mw, x2), (mh, y2, x1, mw), (mh, y2, mw, x2)]
+            regions.extend(children)
+            next_frontier.extend(children)
+        frontier = next_frontier
+    return regions
+
+
+def _compute_adjacency_matrix(max_nodes: int) -> torch.Tensor:
+    """Returns fixed undirected adjacency for a full quadtree in BFS order."""
+    A = torch.zeros(max_nodes, max_nodes)
+    for i in range(1, max_nodes):
+        p = (i - 1) // 4
+        A[i, p] = A[p, i] = 1.0
+    return A
+
+
+class GINLayer(nn.Module):
+    """Single Graph Isomorphism Network message-passing layer."""
+    def __init__(self, in_dim: int, out_dim: int):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(in_dim, out_dim),
+            nn.ReLU(),
+            nn.Linear(out_dim, out_dim),
+        )
+
+    def forward(self, h: torch.Tensor, adj: torch.Tensor) -> torch.Tensor:
+        # h: [B, N, in_dim], adj: [B, N, N]
+        return self.mlp(h + torch.bmm(adj, h))
+
+
+class GINEncoder(nn.Module):
+    """
+    Implements the architecture from Abdel-Aziz et al. (arXiv:2306.11336):
+      1. Build full-resolution quadtree (fixed structure for given board_size).
+      2. GIN on full tree -> graph representation hG.
+      3. MLP(hG, progress) -> ST-Gumbel-Softmax -> keep/merge per internal node.
+      4. Propagate decisions -> active node mask -> abstracted graph.
+      5. GIN on abstracted tree -> sum-pooled output.
+
+    Note that it requires `board_size` to be a power of 2.
+    """
+    def __init__(
+        self,
+        board_size: int,
+        history_len: int,
+        n_channels_per_frame: int,
+        gin_hidden: int = 64,
+        gin_layers: int = 3,
+        gumbel_temperature: float = 1.0,
+    ):
+        super().__init__()
+        if board_size & (board_size - 1):
+            raise ValueError(f"GINEncoder requires board_size to be a power of 2, got {board_size}")
+
+        self.board_size = board_size
+        self.n_ch = n_channels_per_frame * (history_len + 1)
+        self.max_depth = int(math.log2(board_size))
+        self.max_nodes = _compute_max_nodes(board_size)
+        # Internal nodes = all except the leaf level (board_size^2 leaves)
+        self.internal_count = (board_size ** 2 - 1) // 3
+        # Per-channel means + depth + cy + cx + region_size
+        self.feat_dim = self.n_ch + 4
+        self.gumbel_temperature = gumbel_temperature
+
+        self.regions = _compute_bfs_regions(board_size)
+        pos = torch.zeros(self.max_nodes, 4)
+        for i, (y1, y2, x1, x2) in enumerate(self.regions):
+            depth = int(math.log2(board_size / (y2 - y1)))
+            pos[i, 0] = depth / self.max_depth
+            pos[i, 1] = (y1 + y2) / 2 / board_size
+            pos[i, 2] = (x1 + x2) / 2 / board_size
+            pos[i, 3] = (y2 - y1) * (x2 - x1) / (board_size ** 2)
+        # [max_nodes, 4]
+        self.register_buffer('pos_feats', pos)
+        # [max_nodes, max_nodes]
+        self.register_buffer('A', _compute_adjacency_matrix(self.max_nodes))
+        # Projected input + K layer outputs
+        hG_dim = gin_hidden * (gin_layers + 1)
+
+        # GIN on full tree
+        self.feat_proj1 = nn.Linear(self.feat_dim, gin_hidden)
+        self.gin1 = nn.ModuleList([
+            GINLayer(self.feat_dim if i == 0 else gin_hidden, gin_hidden)
+            for i in range(gin_layers)
+        ])
+
+        # Abstractor: hG + progress scalar -> keep/merge logits for internal nodes
+        self.abstractor = nn.Sequential(
+            nn.Linear(hG_dim + 1, gin_hidden * 2),
+            nn.ReLU(),
+            nn.Linear(gin_hidden * 2, self.internal_count * 2),
+        )
+
+        # GIN on abstracted tree
+        self.feat_proj2 = nn.Linear(self.feat_dim, gin_hidden)
+        self.gin2 = nn.ModuleList([
+            GINLayer(self.feat_dim if i == 0 else gin_hidden, gin_hidden)
+            for i in range(gin_layers)
+        ])
+
+        # Same shape as `gin1` readout
+        self.out_dim = hG_dim
+
+    def _node_features(self, boards: torch.Tensor) -> torch.Tensor:
+        """Returns node features for each board in the batch."""
+        B, C = boards.shape[0], boards.shape[1]
+        X = torch.zeros(B, self.max_nodes, self.feat_dim, device=boards.device)
+        for i, (y1, y2, x1, x2) in enumerate(self.regions):
+            X[:, i, :C] = boards[:, :, y1:y2, x1:x2].mean(dim=[2, 3])
+        X[:, :, C:] = self.pos_feats.unsqueeze(0)
+        return X
+
+    def _gin_readout(
+        self,
+        gin_layers: nn.ModuleList,
+        feat_proj: nn.Linear,
+        X: torch.Tensor,
+        A: torch.Tensor,
+    ) -> torch.Tensor:
+        """Sum-pool each GIN layer output + projected input, concatenate -> [B, hG_dim]."""
+        pools = [feat_proj(X).sum(dim=1)]
+        h = X
+        for layer in gin_layers:
+            h = layer(h, A)
+            pools.append(h.sum(dim=1))
+        return torch.cat(pools, dim=-1)
+
+    def _propagate_keep(self, keep: torch.Tensor) -> torch.Tensor:
+        """
+        Propagates keep decisions [B, internal_count]: 1=keep node as internal,
+        0=merge (discard children). Returns active [B, max_nodes]: 1 if node survives
+        into the abstracted tree. Node i is active iff every ancestor decided to keep
+        (not merge) it.
+        """
+        # Build as a list to avoid in-place ops on autograd tensors
+        ones = torch.ones(keep.shape[0], device=keep.device)
+        active: list[torch.Tensor] = [ones]  # root always active
+        for i in range(1, self.max_nodes):
+            p = (i - 1) // 4
+            # Child is active if its parent is active and parent didn't merge
+            active.append(active[p] * keep[:, p])
+        return torch.stack(active, dim=1)  # [B, max_nodes]
+
+    def forward(self, observation: Observation) -> torch.Tensor:
+        boards = torch.cat([observation.previous_boards, observation.current_board], dim=1)
+        B = boards.shape[0]
+        X = self._node_features(boards)
+        A = self.A.unsqueeze(0).expand(B, -1, -1)
+
+        # GIN on full tree
+        hG = self._gin_readout(self.gin1, self.feat_proj1, X, A)
+
+        # Getting learn merge decisions
+        logits = self.abstractor(torch.cat([hG, observation.progress], dim=-1))
+        # [B, internal_count]: 1=keep, 0=merge
+        keep = F.gumbel_softmax(
+            logits.view(B, self.internal_count, 2),
+            tau=self.gumbel_temperature, hard=True,
+        )[..., 0]
+
+        # [B, max_nodes]
+        active = self._propagate_keep(keep)
+
+        X_abs = X * active.unsqueeze(-1)
+        A_abs = self.A.unsqueeze(0) * (active.unsqueeze(2) * active.unsqueeze(1))
+
+        # GIN on abstracted tree
+        return self._gin_readout(self.gin2, self.feat_proj2, X_abs, A_abs)
 
 class PPOMemory:
     def __init__(self, batch_size: int, seed: int | None = None):
@@ -90,9 +276,22 @@ class SharedEncoder(nn.Module):
         return self.conv(x)
 
 class ActorCritic(nn.Module):
-    def __init__(self, board_size: int, history_len: int, n_actions: int, hidden_size: int, n_channels_per_frame: int):
+    def __init__(
+        self,
+        board_size: int,
+        history_len: int,
+        n_actions: int,
+        hidden_size: int,
+        n_channels_per_frame: int,
+        encoder: str = "cnn",
+        gin_hidden: int = 64,
+        gin_layers: int = 3,
+    ):
         super().__init__()
-        self.encoder = SharedEncoder(board_size, history_len, n_channels_per_frame)
+        if encoder == "gin":
+            self.encoder = GINEncoder(board_size, history_len, n_channels_per_frame, gin_hidden, gin_layers)
+        else:
+            self.encoder = SharedEncoder(board_size, history_len, n_channels_per_frame)
 
         fc_in = self.encoder.out_dim + 1  # + progress scalar
 
@@ -135,7 +334,20 @@ class AgentParams:
         self.seed = seed
 
 class PPOAgent:
-    def __init__(self, board_size, history_len, n_actions, hidden_size, device: str = "cpu", params: AgentParams | None = None, frozen: bool = False, n_channels_per_frame: int = 3):
+    def __init__(
+        self,
+        board_size,
+        history_len,
+        n_actions,
+        hidden_size,
+        device: str = "cpu",
+        params: AgentParams | None = None,
+        frozen: bool = False,
+        n_channels_per_frame: int = 3,
+        encoder: str = "cnn",
+        gin_hidden: int = 64,
+        gin_layers: int = 3,
+    ):
         if params is None:
             self.params = AgentParams()
         else:
@@ -148,8 +360,12 @@ class PPOAgent:
         self.device = device
         self.frozen = frozen
         self.n_channels_per_frame = n_channels_per_frame
+        self.encoder_type = encoder
 
-        self.ac = ActorCritic(board_size, history_len, n_actions, hidden_size, n_channels_per_frame).to(device)
+        self.ac = ActorCritic(
+            board_size, history_len, n_actions, hidden_size, n_channels_per_frame,
+            encoder=encoder, gin_hidden=gin_hidden, gin_layers=gin_layers,
+        ).to(device)
         self.optimizer = optim.Adam(self.ac.parameters(), lr=self.params.alpha)
         self.memory = PPOMemory(self.params.batch_size, self.params.seed)
         

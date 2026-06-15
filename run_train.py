@@ -235,6 +235,9 @@ def build_agent(
     seed = agent_cfg.get("seed")
     params = build_agent_params(training_cfg, seed)
     hidden_size = infer_hidden_size(game_cfg, agent_cfg)
+    encoder = str(agent_cfg.get("encoder", "cnn")).lower()
+    gin_hidden = int(agent_cfg.get("gin_hidden", 64))
+    gin_layers = int(agent_cfg.get("gin_layers", 3))
     return PPOAgent(
         game_cfg["size"],
         game_cfg["history_len"],
@@ -243,6 +246,9 @@ def build_agent(
         device,
         params,
         n_channels_per_frame=n_channels,
+        encoder=encoder,
+        gin_hidden=gin_hidden,
+        gin_layers=gin_layers,
     )
 
 
@@ -278,7 +284,12 @@ def maybe_rebuild_agents(
     sender_cfg = agents_cfg.get("sender", {"kind": "ppo"})
     receiver_cfg = agents_cfg.get("receiver", {"kind": "ppo"})
 
-    if allow_stage_warm_start and is_reusable_agent(existing_sender, "sender", env):
+    def _encoder_compatible(existing, cfg: dict) -> bool:
+        if not hasattr(existing, "encoder_type"):
+            return True
+        return existing.encoder_type == str(cfg.get("encoder", "cnn")).lower()
+
+    if allow_stage_warm_start and is_reusable_agent(existing_sender, "sender", env) and _encoder_compatible(existing_sender, sender_cfg):
         sender_agent = existing_sender
     else:
         sender_agent = build_agent(
@@ -290,7 +301,7 @@ def maybe_rebuild_agents(
             device=device,
         )
 
-    if allow_stage_warm_start and is_reusable_agent(existing_receiver, "receiver", env):
+    if allow_stage_warm_start and is_reusable_agent(existing_receiver, "receiver", env) and _encoder_compatible(existing_receiver, receiver_cfg):
         receiver_agent = existing_receiver
     else:
         receiver_agent = build_agent(
