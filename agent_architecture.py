@@ -387,64 +387,61 @@ class PPOAgent:
     def freeze(self, frozen: bool):
         self.frozen = frozen
 
-    def adapt_for_board_size(self, new_board_size: int) -> bool:
-        """
-        Adapt agent to new board size while preserving learned weights.
-        
-        For GIN encoders: rebuilds encoder, but keeps actor/critic heads (fixed output dim).
-        For CNN encoders: rebuilds encoder and preserves actor/critic heads via fixed embedding size.
-        
-        Returns True if adaptation was successful, False otherwise.
-        """
-        if new_board_size == self.board_size:
+    @staticmethod
+    def _copy_matching_state_dict(source: nn.Module, target: nn.Module) -> None:
+        source_state = source.state_dict()
+        target_state = target.state_dict()
+        matched = {
+            key: value
+            for key, value in source_state.items()
+            if key in target_state and value.shape == target_state[key].shape
+        }
+        target.load_state_dict(matched, strict=False)
+
+    def adapt_to_stage(
+        self,
+        new_board_size: int,
+        new_n_actions: int,
+        new_encoder_type: str,
+        new_hidden_size: int,
+        new_n_channels_per_frame: int,
+    ) -> bool:
+        if self.encoder_type != new_encoder_type:
+            return False
+        if self.hidden_size != new_hidden_size:
+            return False
+        if self.n_channels_per_frame != new_n_channels_per_frame:
+            return False
+        if new_board_size == self.board_size and new_n_actions == self.n_actions:
             return True
 
-        if self.encoder_type == "gin":
-            old_ac = self.ac
-            new_ac = ActorCritic(
-                board_size=new_board_size,
-                history_len=self.history_len,
-                n_actions=self.n_actions,
-                hidden_size=self.hidden_size,
-                n_channels_per_frame=self.n_channels_per_frame,
-                encoder="gin",
-                gin_hidden=self.gin_hidden,
-                gin_layers=self.gin_layers,
-            ).to(self.device)
+        old_ac = self.ac
+        new_ac = ActorCritic(
+            board_size=new_board_size,
+            history_len=self.history_len,
+            n_actions=new_n_actions,
+            hidden_size=self.hidden_size,
+            n_channels_per_frame=self.n_channels_per_frame,
+            encoder=self.encoder_type,
+            gin_hidden=self.gin_hidden,
+            gin_layers=self.gin_layers,
+            cnn_embedding_dim=self.cnn_embedding_dim,
+        ).to(self.device)
 
-            with torch.no_grad():
-                new_ac.actor_head.load_state_dict(old_ac.actor_head.state_dict())
-                new_ac.critic_head.load_state_dict(old_ac.critic_head.state_dict())
+        try:
+            self._copy_matching_state_dict(old_ac.encoder, new_ac.encoder)
+        except RuntimeError:
+            return False
 
-            self.ac = new_ac
-            self.board_size = new_board_size
-            self.optimizer = optim.Adam(self.ac.parameters(), lr=self.params.alpha)
-            return True
+        with torch.no_grad():
+            self._copy_matching_state_dict(old_ac.actor_head, new_ac.actor_head)
+            new_ac.critic_head.load_state_dict(old_ac.critic_head.state_dict())
 
-        if self.encoder_type == "cnn":
-            old_ac = self.ac
-            new_ac = ActorCritic(
-                board_size=new_board_size,
-                history_len=self.history_len,
-                n_actions=self.n_actions,
-                hidden_size=self.hidden_size,
-                n_channels_per_frame=self.n_channels_per_frame,
-                encoder="cnn",
-                gin_hidden=self.gin_hidden,
-                gin_layers=self.gin_layers,
-                cnn_embedding_dim=self.cnn_embedding_dim,
-            ).to(self.device)
-
-            with torch.no_grad():
-                new_ac.actor_head.load_state_dict(old_ac.actor_head.state_dict())
-                new_ac.critic_head.load_state_dict(old_ac.critic_head.state_dict())
-
-            self.ac = new_ac
-            self.board_size = new_board_size
-            self.optimizer = optim.Adam(self.ac.parameters(), lr=self.params.alpha)
-            return True
-
-        return False
+        self.ac = new_ac
+        self.board_size = new_board_size
+        self.n_actions = new_n_actions
+        self.optimizer = optim.Adam(self.ac.parameters(), lr=self.params.alpha)
+        return True
 
     def remember(self, state, action, probs, vals, reward, done):
         if self.frozen:

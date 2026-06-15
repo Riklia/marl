@@ -254,22 +254,34 @@ def build_agent(
     )
 
 
-def is_reusable_agent(existing_agent: Any, role: str, env: BoardsWrapper) -> bool:
+def is_reusable_agent(
+    existing_agent: Any,
+    role: str,
+    env: BoardsWrapper,
+    game_cfg: dict[str, Any],
+    agent_cfg: dict[str, Any],
+) -> bool:
     if existing_agent is None:
         return False
     if isinstance(existing_agent, CopycatReceiverAgent):
         return False  # holds an env reference; must be rebuilt per stage
     if isinstance(existing_agent, RandomAgent):
+        n_actions = env.sender_n_actions if role == "sender" else env.receiver_n_actions
+        return len(existing_agent.permitted_actions) == n_actions
+
+    if isinstance(existing_agent, PPOAgent):
+        if existing_agent.encoder_type != str(agent_cfg.get("encoder", "cnn")).lower():
+            return False
+        if existing_agent.hidden_size != infer_hidden_size(game_cfg, agent_cfg):
+            return False
+        if existing_agent.history_len != int(game_cfg["history_len"]):
+            return False
+        n_channels = env.sender_n_channels if role == "sender" else env.receiver_n_channels
+        if existing_agent.n_channels_per_frame != n_channels:
+            return False
         return True
 
-    n_actions = env.sender_n_actions if role == "sender" else env.receiver_n_actions
-    for attr_name in ("n_actions", "action_dim"):
-        if hasattr(existing_agent, attr_name):
-            return int(getattr(existing_agent, attr_name)) == int(n_actions)
-
-    # If we cannot inspect action space, keep the agent and let runtime fail loudly
-    # only if the underlying implementation is incompatible.
-    return True
+    return False
 
 
 def adapt_agent_if_needed(
@@ -277,15 +289,26 @@ def adapt_agent_if_needed(
     role: str,
     env: BoardsWrapper,
     game_cfg: dict[str, Any],
+    agent_cfg: dict[str, Any],
 ) -> bool:
     if not isinstance(existing_agent, PPOAgent):
         return True
-    
+
     new_board_size = int(game_cfg["size"])
-    if existing_agent.board_size == new_board_size:
-        return True
-    
-    return existing_agent.adapt_for_board_size(new_board_size)
+    new_n_actions = env.sender_n_actions if role == "sender" else env.receiver_n_actions
+    new_encoder_type = str(agent_cfg.get("encoder", "cnn")).lower()
+    new_hidden_size = infer_hidden_size(game_cfg, agent_cfg)
+    if existing_agent.history_len != int(game_cfg["history_len"]):
+        return False
+
+    new_n_channels = env.sender_n_channels if role == "sender" else env.receiver_n_channels
+    return existing_agent.adapt_to_stage(
+        new_board_size=new_board_size,
+        new_n_actions=new_n_actions,
+        new_encoder_type=new_encoder_type,
+        new_hidden_size=new_hidden_size,
+        new_n_channels_per_frame=new_n_channels,
+    )
 
 def maybe_rebuild_agents(
     *,
@@ -306,8 +329,8 @@ def maybe_rebuild_agents(
             return True
         return existing.encoder_type == str(cfg.get("encoder", "cnn")).lower()
 
-    if allow_stage_warm_start and is_reusable_agent(existing_sender, "sender", env) and _encoder_compatible(existing_sender, sender_cfg):
-        if adapt_agent_if_needed(existing_sender, "sender", env, game_cfg):
+    if allow_stage_warm_start and is_reusable_agent(existing_sender, "sender", env, game_cfg, sender_cfg) and _encoder_compatible(existing_sender, sender_cfg):
+        if adapt_agent_if_needed(existing_sender, "sender", env, game_cfg, sender_cfg):
             sender_agent = existing_sender
         else:
             sender_agent = build_agent(
@@ -328,8 +351,8 @@ def maybe_rebuild_agents(
             device=device,
         )
 
-    if allow_stage_warm_start and is_reusable_agent(existing_receiver, "receiver", env) and _encoder_compatible(existing_receiver, receiver_cfg):
-        if adapt_agent_if_needed(existing_receiver, "receiver", env, game_cfg):
+    if allow_stage_warm_start and is_reusable_agent(existing_receiver, "receiver", env, game_cfg, receiver_cfg) and _encoder_compatible(existing_receiver, receiver_cfg):
+        if adapt_agent_if_needed(existing_receiver, "receiver", env, game_cfg, receiver_cfg):
             receiver_agent = existing_receiver
         else:
             receiver_agent = build_agent(
