@@ -256,20 +256,29 @@ class PPOMemory:
         self.vals = []
 
 class SharedEncoder(nn.Module):
-    def __init__(self, board_size: int, history_len: int, n_channels_per_frame: int):
+    def __init__(
+        self,
+        board_size: int,
+        history_len: int,
+        n_channels_per_frame: int,
+        embedding_dim: int = 128,
+    ):
         super().__init__()
         self.channels = n_channels_per_frame * (history_len + 1)
-        channels = self.channels
+        self.embedding_dim = embedding_dim
         self.conv = nn.Sequential(
-            nn.Conv2d(channels, channels * 2, kernel_size=3, padding=1),
+            nn.Conv2d(self.channels, self.channels * 2, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(channels * 2, channels * 2, kernel_size=3, padding=1),
+            nn.Conv2d(self.channels * 2, self.channels * 2, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(channels * 2, channels, kernel_size=3, padding=1),
+            nn.Conv2d(self.channels * 2, self.channels, kernel_size=3, padding=1),
             nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
+            nn.Linear(self.channels, self.embedding_dim),
+            nn.ReLU(),
         )
-        self.out_dim = channels * board_size * board_size  # flattened conv output
+        self.out_dim = self.embedding_dim
 
     def forward(self, observation):
         x = torch.cat([observation.previous_boards, observation.current_board], dim=1)
@@ -286,12 +295,13 @@ class ActorCritic(nn.Module):
         encoder: str = "cnn",
         gin_hidden: int = 64,
         gin_layers: int = 3,
+        cnn_embedding_dim: int = 128,
     ):
         super().__init__()
         if encoder == "gin":
             self.encoder = GINEncoder(board_size, history_len, n_channels_per_frame, gin_hidden, gin_layers)
         else:
-            self.encoder = SharedEncoder(board_size, history_len, n_channels_per_frame)
+            self.encoder = SharedEncoder(board_size, history_len, n_channels_per_frame, cnn_embedding_dim)
 
         fc_in = self.encoder.out_dim + 1  # + progress scalar
 
@@ -347,6 +357,7 @@ class PPOAgent:
         encoder: str = "cnn",
         gin_hidden: int = 64,
         gin_layers: int = 3,
+        cnn_embedding_dim: int = 128,
     ):
         if params is None:
             self.params = AgentParams()
@@ -361,17 +372,80 @@ class PPOAgent:
         self.frozen = frozen
         self.n_channels_per_frame = n_channels_per_frame
         self.encoder_type = encoder
+        self.gin_hidden = gin_hidden
+        self.gin_layers = gin_layers
+        self.cnn_embedding_dim = cnn_embedding_dim
 
         self.ac = ActorCritic(
             board_size, history_len, n_actions, hidden_size, n_channels_per_frame,
             encoder=encoder, gin_hidden=gin_hidden, gin_layers=gin_layers,
+            cnn_embedding_dim=cnn_embedding_dim,
         ).to(device)
         self.optimizer = optim.Adam(self.ac.parameters(), lr=self.params.alpha)
         self.memory = PPOMemory(self.params.batch_size, self.params.seed)
         
     def freeze(self, frozen: bool):
         self.frozen = frozen
-       
+
+    def adapt_for_board_size(self, new_board_size: int) -> bool:
+        """
+        Adapt agent to new board size while preserving learned weights.
+        
+        For GIN encoders: rebuilds encoder, but keeps actor/critic heads (fixed output dim).
+        For CNN encoders: rebuilds encoder and preserves actor/critic heads via fixed embedding size.
+        
+        Returns True if adaptation was successful, False otherwise.
+        """
+        if new_board_size == self.board_size:
+            return True
+
+        if self.encoder_type == "gin":
+            old_ac = self.ac
+            new_ac = ActorCritic(
+                board_size=new_board_size,
+                history_len=self.history_len,
+                n_actions=self.n_actions,
+                hidden_size=self.hidden_size,
+                n_channels_per_frame=self.n_channels_per_frame,
+                encoder="gin",
+                gin_hidden=self.gin_hidden,
+                gin_layers=self.gin_layers,
+            ).to(self.device)
+
+            with torch.no_grad():
+                new_ac.actor_head.load_state_dict(old_ac.actor_head.state_dict())
+                new_ac.critic_head.load_state_dict(old_ac.critic_head.state_dict())
+
+            self.ac = new_ac
+            self.board_size = new_board_size
+            self.optimizer = optim.Adam(self.ac.parameters(), lr=self.params.alpha)
+            return True
+
+        if self.encoder_type == "cnn":
+            old_ac = self.ac
+            new_ac = ActorCritic(
+                board_size=new_board_size,
+                history_len=self.history_len,
+                n_actions=self.n_actions,
+                hidden_size=self.hidden_size,
+                n_channels_per_frame=self.n_channels_per_frame,
+                encoder="cnn",
+                gin_hidden=self.gin_hidden,
+                gin_layers=self.gin_layers,
+                cnn_embedding_dim=self.cnn_embedding_dim,
+            ).to(self.device)
+
+            with torch.no_grad():
+                new_ac.actor_head.load_state_dict(old_ac.actor_head.state_dict())
+                new_ac.critic_head.load_state_dict(old_ac.critic_head.state_dict())
+
+            self.ac = new_ac
+            self.board_size = new_board_size
+            self.optimizer = optim.Adam(self.ac.parameters(), lr=self.params.alpha)
+            return True
+
+        return False
+
     def remember(self, state, action, probs, vals, reward, done):
         if self.frozen:
             return

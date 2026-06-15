@@ -238,6 +238,7 @@ def build_agent(
     encoder = str(agent_cfg.get("encoder", "cnn")).lower()
     gin_hidden = int(agent_cfg.get("gin_hidden", 64))
     gin_layers = int(agent_cfg.get("gin_layers", 3))
+    cnn_embedding_dim = int(agent_cfg.get("cnn_embedding_dim", 128))
     return PPOAgent(
         game_cfg["size"],
         game_cfg["history_len"],
@@ -249,6 +250,7 @@ def build_agent(
         encoder=encoder,
         gin_hidden=gin_hidden,
         gin_layers=gin_layers,
+        cnn_embedding_dim=cnn_embedding_dim,
     )
 
 
@@ -270,6 +272,21 @@ def is_reusable_agent(existing_agent: Any, role: str, env: BoardsWrapper) -> boo
     return True
 
 
+def adapt_agent_if_needed(
+    existing_agent: Any,
+    role: str,
+    env: BoardsWrapper,
+    game_cfg: dict[str, Any],
+) -> bool:
+    if not isinstance(existing_agent, PPOAgent):
+        return True
+    
+    new_board_size = int(game_cfg["size"])
+    if existing_agent.board_size == new_board_size:
+        return True
+    
+    return existing_agent.adapt_for_board_size(new_board_size)
+
 def maybe_rebuild_agents(
     *,
     env: BoardsWrapper,
@@ -290,7 +307,17 @@ def maybe_rebuild_agents(
         return existing.encoder_type == str(cfg.get("encoder", "cnn")).lower()
 
     if allow_stage_warm_start and is_reusable_agent(existing_sender, "sender", env) and _encoder_compatible(existing_sender, sender_cfg):
-        sender_agent = existing_sender
+        if adapt_agent_if_needed(existing_sender, "sender", env, game_cfg):
+            sender_agent = existing_sender
+        else:
+            sender_agent = build_agent(
+                role="sender",
+                env=env,
+                game_cfg=game_cfg,
+                training_cfg=training_cfg,
+                agent_cfg=sender_cfg,
+                device=device,
+            )
     else:
         sender_agent = build_agent(
             role="sender",
@@ -302,7 +329,17 @@ def maybe_rebuild_agents(
         )
 
     if allow_stage_warm_start and is_reusable_agent(existing_receiver, "receiver", env) and _encoder_compatible(existing_receiver, receiver_cfg):
-        receiver_agent = existing_receiver
+        if adapt_agent_if_needed(existing_receiver, "receiver", env, game_cfg):
+            receiver_agent = existing_receiver
+        else:
+            receiver_agent = build_agent(
+                role="receiver",
+                env=env,
+                game_cfg=game_cfg,
+                training_cfg=training_cfg,
+                agent_cfg=receiver_cfg,
+                device=device,
+            )
     else:
         receiver_agent = build_agent(
             role="receiver",
