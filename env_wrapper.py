@@ -138,11 +138,13 @@ class BoardsWrapper:
             return -0.5 * self.instant_multiplier
         return 0.5 * self.instant_multiplier
     
-    def render(self) -> None:
+    def render(self, fps: int = 5) -> None:
         title = f"Performance: {self.final_performance}" if self.done else None
+        freeze = fps * 2  # 2 seconds of freeze at start/end
         create_animation(
-            [self.animation_frames[0]] * 60 + self.animation_frames + [self.animation_frames[-1]] * 60,
+            [self.animation_frames[0]] * freeze + self.animation_frames + [self.animation_frames[-1]] * freeze,
             title,
+            fps=fps,
         )
 
     def sender_observe(self) -> Observation:

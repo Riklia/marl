@@ -9,6 +9,7 @@ import torch
 
 from agent_architecture import load_agents, PPOAgent, RandomAgent
 from env_wrapper import BoardsWrapper
+from misc_utils import create_animation
 from run_train import build_env
 
 
@@ -35,13 +36,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--render",
         action="store_true",
-        help="Render one of the episodes after it finishes.",
+        help="Render the most interesting episodes after all games finish.",
     )
     parser.add_argument(
-        "--render-index",
+        "--n-render",
+        type=int,
+        default=1,
+        help="How many episodes to render (picks the most interesting ones). Only used when --render is set.",
+    )
+    parser.add_argument(
+        "--min-moves",
         type=int,
         default=0,
-        help="Which episode index to render (0-based). Only used when --render is set.",
+        help="Minimum number of moves for an episode to be considered interesting enough to render.",
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=5,
+        help="Frames per second for saved GIF animations.",
     )
     parser.add_argument(
         "--seed",
@@ -128,7 +141,7 @@ def set_global_seeds(seed: int | None) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def run_episode(env: BoardsWrapper, sender_agent: Any, receiver_agent: Any, render: bool = False) -> tuple[float, float]:
+def run_episode(env: BoardsWrapper, sender_agent: Any, receiver_agent: Any) -> tuple[float, float, int, list]:
     env.reset()
     done = False
     while not done:
@@ -144,11 +157,10 @@ def run_episode(env: BoardsWrapper, sender_agent: Any, receiver_agent: Any, rend
 
     final_reward = env.get_final_reward()
     final_performance = env.get_final_performance()
+    num_moves = env.num_moves
+    frames = list(env.animation_frames)
 
-    if render:
-        env.render()
-
-    return final_reward, final_performance
+    return final_reward, final_performance, num_moves, frames
 
 
 def main() -> None:
@@ -165,19 +177,36 @@ def main() -> None:
     print(f"Evaluating stage: {stage_cfg.get('name', 'single_run')}")
     print(f"Game config: size={stage_cfg['game']['size']}, landmarks={stage_cfg['game']['n_landmarks']}, clues={stage_cfg['game']['n_clues']}, questions={stage_cfg['game']['n_questions']}")
 
-    scores = []
+    episodes = []
     for episode in range(args.n_games):
-        render = args.render and episode == args.render_index
-        reward, performance = run_episode(env, sender_agent, receiver_agent, render=render)
-        print(f"Episode {episode}: reward={reward:.4f}, performance={performance:.4f}, rendered={render}")
-        scores.append((reward, performance))
+        reward, performance, num_moves, frames = run_episode(env, sender_agent, receiver_agent)
+        print(f"Episode {episode}: reward={reward:.4f}, performance={performance:.4f}, moves={num_moves}")
+        episodes.append((reward, performance, num_moves, frames))
 
-    mean_reward = sum(r for r, _ in scores) / len(scores)
-    mean_perf = sum(p for _, p in scores) / len(scores)
+    mean_reward = sum(r for r, *_ in episodes) / len(episodes)
+    mean_perf = sum(p for _, p, *_ in episodes) / len(episodes)
     print("\nValidation summary:")
-    print(f"  Episodes: {len(scores)}")
+    print(f"  Episodes: {len(episodes)}")
     print(f"  Mean reward: {mean_reward:.4f}")
     print(f"  Mean performance: {mean_perf:.4f}")
+
+    if args.render:
+        candidates = [
+            (perf, num_moves, frames)
+            for _, perf, num_moves, frames in episodes
+            if num_moves >= args.min_moves
+        ]
+        # Sort by performance desc, then by moves desc (more moves = more interesting communication)
+        candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        to_render = candidates[:args.n_render]
+        if not to_render:
+            print(f"No episodes matched --min-moves={args.min_moves}; nothing rendered.")
+        for i, (perf, num_moves, frames) in enumerate(to_render):
+            freeze = args.fps * 2
+            padded = [frames[0]] * freeze + frames + [frames[-1]] * freeze
+            title = f"Performance: {perf:.2f}  Moves: {num_moves}"
+            print(f"Rendering animation {i + 1}/{len(to_render)} (perf={perf:.2f}, moves={num_moves})")
+            create_animation(padded, title=title, fps=args.fps)
 
 
 if __name__ == "__main__":

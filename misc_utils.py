@@ -63,7 +63,7 @@ def find_latest_version(folder_path: str, file_name: str, separator: str, extens
     else:
         return None, 0
 
-def create_animation(image_list, title: str | None = None):
+def create_animation(image_list, title: str | None = None, fps: int = 5):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     animations_dir = os.path.join(script_dir, 'animations')
     os.makedirs(animations_dir, exist_ok=True)
@@ -82,7 +82,8 @@ def create_animation(image_list, title: str | None = None):
     ani = FuncAnimation(fig, update, frames=image_list, repeat=False)
 
     output_path = os.path.join(animations_dir, f'animation_{version}.gif')
-    ani.save(output_path, writer=PillowWriter(fps = 30))
+    ani.save(output_path, writer=PillowWriter(fps=fps))
+    plt.close(fig)
     print(f'Animation saved to: {output_path}')
 
 def smooth_list(values, n):
