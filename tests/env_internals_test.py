@@ -523,3 +523,57 @@ def test_partial_visibility_exposes_only_subset():
     for x, y in hidden_landmarks:
         assert view[y, x, shadow_ch] == 0
 
+
+
+def test_block_clue_on_landmark_prevents_move():
+    env = BoardsImplementation(
+        size=3,
+        n_landmarks=1,
+        n_clues=1,
+        n_questions=0,
+        seed=42,
+        block_clue_on_landmark=True,
+    )
+    env.board1_landmarks = [(1, 0)]
+    env.board1_clues = [(0, 0)]
+    before = env.board1_clues.copy()
+
+    # Right (index 4) would land on the landmark
+    env.sender_agent_action(4)
+    assert env.useless_action_flag is True
+    assert env.board1_clues == before
+
+
+def test_block_clue_on_landmark_allows_move_elsewhere():
+    env = BoardsImplementation(
+        size=3,
+        n_landmarks=1,
+        n_clues=1,
+        n_questions=0,
+        seed=42,
+        block_clue_on_landmark=True,
+    )
+    env.board1_landmarks = [(2, 0)]
+    env.board1_clues = [(0, 0)]
+
+    # Right (index 4) lands on (1, 0), not a landmark
+    env.sender_agent_action(4)
+    assert env.useless_action_flag is False
+    assert env.board1_clues == [(1, 0)]
+
+
+def test_block_clue_on_landmark_off_by_default():
+    env = BoardsImplementation(
+        size=3,
+        n_landmarks=1,
+        n_clues=1,
+        n_questions=0,
+        seed=42,
+    )
+    env.board1_landmarks = [(1, 0)]
+    env.board1_clues = [(0, 0)]
+
+    # Without the flag, moving onto a landmark is allowed
+    env.sender_agent_action(4)
+    assert env.useless_action_flag is False
+    assert env.board1_clues == [(1, 0)]

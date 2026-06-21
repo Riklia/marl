@@ -12,11 +12,12 @@ class BoardsImplementation:
             n_landmarks: int, 
             n_clues: int,
             n_questions: int,
-            linked_shadows: bool = True, 
+            linked_shadows: bool = True,
             seed: int | None = None,
             receiver_goal_visibility_mode="none",
             receiver_goal_visibility_ratio=0.0,
             disable_sender=False,
+            block_clue_on_landmark=False,
         ):
         if size < 1:
             raise ValueError("The board size should be positive.")
@@ -53,6 +54,7 @@ class BoardsImplementation:
         self.receiver_goal_visibility_mode = receiver_goal_visibility_mode
         self.receiver_goal_visibility_ratio = float(receiver_goal_visibility_ratio)
         self.disable_sender = bool(disable_sender)
+        self.block_clue_on_landmark = bool(block_clue_on_landmark)
 
         # None is "do nothing" action
         self.sender_agent_actions = [None]
@@ -224,6 +226,7 @@ class BoardsImplementation:
             self.board1_clues,
             action.object_number,
             action.move,
+            blocked_by=self.board1_landmarks if self.block_clue_on_landmark else (),
         )
 
     def receiver_agent_action(self, action_index: int) -> None:
